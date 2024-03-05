@@ -229,9 +229,11 @@ void VerifyGet(const CBTree<T> &tree,
                Slice expected_val) {
   char vbuf[64];
   size_t len = sizeof(vbuf);
-  ASSERT_EQ(CBTree<T>::GET_SUCCESS,
-            tree.GetCopy(key, vbuf, &len))
-    << "Failed on key " << HexDump(key);
+  if (CBTree<T>::GET_SUCCESS != tree.GetCopy(key, vbuf, &len)) {
+    tree.DebugPrint();
+    std::cerr << "Failed on key:" << key << std::endl;
+    FAIL();
+  }
 
   Slice got_val(vbuf, len);
   ASSERT_EQ(expected_val, got_val)
@@ -428,6 +430,81 @@ TEST_F(TestCBTree, TestVersionLockConcurrent) {
 TEST_F(TestCBTree, TestConcurrentInsert) {
   DoTestConcurrentInsert<SmallFanoutTraits>();
 }
+
+// Same, but with a tree that tries to provoke race conditions.
+TEST_F(TestCBTree, TestPrint) {
+  unique_ptr<CBTree<RacyTraits>> tree;
+  tree.reset(new CBTree<RacyTraits>());
+
+  int n_inserts = 100; 
+  for(int i = 0; i <n_inserts; ++i) {
+
+    char kbuf[64];
+    char vbuf[64];
+    MakeKey(kbuf, sizeof(kbuf), i);
+    snprintf(vbuf, sizeof(vbuf), "val_%d", i);
+    if (!tree->Insert(Slice(kbuf), Slice(vbuf))) {
+      FAIL() << "Failed insert at iteration " << i;
+    }
+    std::cerr << "INSERT " << i << std::endl;
+    tree->DebugPrint();
+  }
+  tree.reset(nullptr);
+}
+
+// Same, but with a tree that tries to provoke race conditions.
+TEST_F(TestCBTree, TestArmProblem) {
+  unique_ptr<CBTree<RacyTraits>> tree;
+
+  int num_threads = 16; 
+  int ins_per_thread = 30; 
+  int n_trials = 600;
+
+  vector<thread> threads;
+  Barrier go_barrier(num_threads + 1); 
+  Barrier middle_barrier(num_threads);
+  Barrier done_barrier(num_threads + 1); 
+
+
+  for (int i = 0; i < num_threads; i++) {
+    threads.emplace_back([idx = i, &go_barrier, &middle_barrier, &done_barrier, &tree, ins_per_thread](){
+      for(;;) {
+        go_barrier.Wait();
+        if (!tree) {
+          return;
+        }   
+        InsertRange(tree.get(), idx * ins_per_thread , (idx + 1) * ins_per_thread);
+
+        middle_barrier.Wait();
+
+        VerifyRange(*tree.get(), idx * ins_per_thread , (idx + 1) * ins_per_thread);
+        done_barrier.Wait();   
+      }   
+    }   
+
+    );  
+  }
+
+  for (int trial = 0; trial < n_trials; trial++) {
+    tree.reset(new CBTree<RacyTraits>());
+    go_barrier.Wait();
+
+    done_barrier.Wait();
+
+    if (::testing::Test::HasFatalFailure()) {
+      tree->DebugPrint();
+      break;
+    }   
+  }
+
+  tree.reset(nullptr);
+  go_barrier.Wait();
+
+  for (thread &thr : threads) {
+    thr.join();
+  }
+}
+
 
 // Same, but with a tree that tries to provoke race conditions.
 TEST_F(TestCBTree, TestRacyConcurrentInsert) {
