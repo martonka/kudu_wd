@@ -24,6 +24,7 @@
 #include <thread>
 #include <unordered_set>
 #include <vector>
+#include <chrono>
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
@@ -38,6 +39,7 @@
 #include "kudu/util/memory/arena.h"
 #include "kudu/util/memory/overwrite.h"
 #include "kudu/util/slice.h"
+#include "kudu/util/mem_tracker.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
 
@@ -886,6 +888,117 @@ TEST_F(TestCBTree, TestIteratorSeekAtOrBefore) {
     iter->GetCurrentEntry(&k, &v);
     ASSERT_EQ("key2000", k.ToString());
   }
+}
+
+struct DefaultTreeTraits : public btree::BTreeTraits {
+  // typedef ThreadSafeMemoryTrackingArena ArenaType;
+};
+
+struct ProdTreeTraits : public btree::BTreeTraits {
+  typedef ThreadSafeMemoryTrackingArena ArenaType;
+};
+
+TEST_F(TestCBTree, TestPerformanceBasic) {
+  auto start = std::chrono::steady_clock::now();
+  unique_ptr<CBTree<DefaultTreeTraits>> tree;
+
+  int num_threads = 20;
+  int ins_per_thread = 30000;
+  int n_trials = 10;
+
+  vector<thread> threads;
+  Barrier go_barrier(num_threads + 1);
+  Barrier done_barrier(num_threads + 1);
+
+  for (int i = 0; i < num_threads; i++) {
+    threads.emplace_back([idx = i, &go_barrier, &done_barrier, &tree, ins_per_thread]() {
+      for (;;) {
+        go_barrier.Wait();
+        if (!tree) {
+          return;
+        }
+        InsertRange(tree.get(), idx * ins_per_thread, (idx + 1) * ins_per_thread);
+        VerifyRange(*tree.get(), idx * ins_per_thread, (idx + 1) * ins_per_thread);
+        done_barrier.Wait();
+      }
+    });
+  }
+  for (int trial = 0; trial < n_trials; trial++) {
+    //    auto mtbf = std::make_shared<MemoryTrackingBufferAllocator>(
+    //    HeapBufferAllocator::Get(), MemTracker::GetRootTracker());
+    // auto arena_ptr = std::make_shared<ThreadSafeMemoryTrackingArena>(16, mtbf);
+    // tree.reset(new CBTree<DefaultTreeTraits>(arena_ptr));
+    tree.reset(new CBTree<DefaultTreeTraits>());
+    go_barrier.Wait();
+
+    done_barrier.Wait();
+
+    if (::testing::Test::HasFatalFailure()) {
+      break;
+    }
+  }
+
+  tree.reset(nullptr);
+  go_barrier.Wait();
+
+  for (thread& thr : threads) {
+    thr.join();
+  }
+  auto stop = std::chrono::steady_clock::now();
+  std::cerr << "MZXXXX "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count()
+            << std::endl;
+}
+
+TEST_F(TestCBTree, TestPerformanceThreadSafe) {
+  auto start = std::chrono::steady_clock::now();
+  unique_ptr<CBTree<ProdTreeTraits>> tree;
+
+  int num_threads = 20;
+  int ins_per_thread = 30000;
+  int n_trials = 10;
+
+  vector<thread> threads;
+  Barrier go_barrier(num_threads + 1);
+  Barrier done_barrier(num_threads + 1);
+
+  for (int i = 0; i < num_threads; i++) {
+    threads.emplace_back([idx = i, &go_barrier, &done_barrier, &tree, ins_per_thread]() {
+      for (;;) {
+        go_barrier.Wait();
+        if (!tree) {
+          return;
+        }
+        InsertRange(tree.get(), idx * ins_per_thread, (idx + 1) * ins_per_thread);
+        VerifyRange(*tree.get(), idx * ins_per_thread, (idx + 1) * ins_per_thread);
+        done_barrier.Wait();
+      }
+    });
+  }
+  for (int trial = 0; trial < n_trials; trial++) {
+    auto mtbf = std::make_shared<MemoryTrackingBufferAllocator>(HeapBufferAllocator::Get(),
+                                                                MemTracker::GetRootTracker());
+    auto arena_ptr = std::make_shared<ThreadSafeMemoryTrackingArena>(16, mtbf);
+    tree.reset(new CBTree<ProdTreeTraits>(arena_ptr));
+    go_barrier.Wait();
+
+    done_barrier.Wait();
+
+    if (::testing::Test::HasFatalFailure()) {
+      break;
+    }
+  }
+
+  tree.reset(nullptr);
+  go_barrier.Wait();
+
+  for (thread& thr : threads) {
+    thr.join();
+  }
+  auto stop = std::chrono::steady_clock::now();
+  std::cerr << "MZXXXX "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count()
+            << std::endl;
 }
 
 } // namespace btree
