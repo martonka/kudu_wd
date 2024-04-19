@@ -476,7 +476,7 @@ void TestCBTree::DoTestConcurrentInsert() {
 
     if (::testing::Test::HasFatalFailure()) {
       tree->DebugPrint();
-      return;
+      break;
     }
   }
 
