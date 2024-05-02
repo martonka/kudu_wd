@@ -120,6 +120,7 @@ bool DecrementIntCell(void* cell_ptr) {
     if (orig == MathLimits<cpp_type>::kMin) {
       dec = MathLimits<cpp_type>::kMax;
     } else {
+      std::cerr << "Dear gcc, please be friendly. Thank you" << std::endl;
       dec = orig - 1;
     }
   }
