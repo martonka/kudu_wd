@@ -42,6 +42,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <boost/smart_ptr/detail/yield_k.hpp>
 #include <boost/utility/binary.hpp>
 #include <memory>
@@ -177,9 +178,11 @@ struct VersionField {
   }
   static void SetSplitting(volatile AtomicVersion *v) {
     base::subtle::Release_Store(v, *v | BTREE_SPLITTING_MASK);
+    std::atomic_thread_fence(std::memory_order_release);
   }
   static void SetInserting(volatile AtomicVersion *v) {
     base::subtle::Release_Store(v, *v | BTREE_INSERTING_MASK);
+    std::atomic_thread_fence(std::memory_order_release);
   }
   static void SetLockedInsertingNoBarrier(volatile AtomicVersion *v) {
     *v = VersionField::BTREE_LOCK_MASK | VersionField::BTREE_INSERTING_MASK;
@@ -1036,6 +1039,7 @@ class CBTree {
 
         // Got some kind of result, but may be based on racy data.
         // Verify it.
+        std::atomic_thread_fence(std::memory_order_acquire);
         AtomicVersion new_version = leaf->StableVersion();
         if (VersionField::HasSplit(version, new_version)) {
           goto retry_from_root;
@@ -1081,6 +1085,7 @@ class CBTree {
 
         // Got some kind of result, but may be based on racy data.
         // Verify it.
+        std::atomic_thread_fence(std::memory_order_acquire);
         AtomicVersion new_version = leaf->StableVersion();
         if (VersionField::HasSplit(version, new_version)) {
           goto retry_from_root;
@@ -1187,9 +1192,11 @@ class CBTree {
         child_base = child.base_ptr();
         child_version = child_base->StableVersion();
       }
+      std::atomic_thread_fence(std::memory_order_acquire);
       AtomicVersion new_node_version = node_base->AcquireVersion();
 
       if (VersionField::IsDifferent(version, new_node_version)) {
+        std::atomic_thread_fence(std::memory_order_acquire);
         new_node_version = node_base->StableVersion();
 
         if (VersionField::HasSplit(version, new_node_version)) {
@@ -1800,7 +1807,7 @@ class CBTreeIterator {
       retry_in_leaf:
       {
         memcpy(static_cast<void*>(&leaf_copy_), leaf, sizeof(leaf_copy_));
-
+        std::atomic_thread_fence(std::memory_order_acquire);
         AtomicVersion new_version = leaf->StableVersion();
         if (VersionField::HasSplit(version, new_version)) {
           goto retry_from_root;
