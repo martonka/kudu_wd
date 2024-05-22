@@ -29,6 +29,7 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
+#include "kudu/gutil/atomicops.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/tablet/concurrent_btree.h"
@@ -741,7 +742,7 @@ TEST_F(TestCBTree, TestConcurrentIterateAndInsert) {
 
     if (::testing::Test::HasFatalFailure()) {
       tree->DebugPrint();
-      return;
+      break;
     }
   }
 
