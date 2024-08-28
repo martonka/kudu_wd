@@ -144,7 +144,7 @@ SimpleSink* registered_sink = nullptr;
 // will restore stderr logging back to this severity level.
 //
 // Protected by 'logging_mutex'.
-int initial_stderr_severity;
+google::LogSeverity initial_stderr_severity;
 
 void EnableAsyncLogging() {
   debug::ScopedLeakCheckDisabler leaky;
@@ -223,7 +223,7 @@ void InitGoogleLoggingSafe(const char* arg) {
 
   if (!FLAGS_log_filename.empty()) {
     for (int severity = google::INFO; severity <= google::FATAL; ++severity) {
-      google::SetLogSymlink(severity, FLAGS_log_filename.c_str());
+      google::SetLogSymlink(static_cast<google::LogSeverity>(severity), FLAGS_log_filename.c_str());
     }
   }
 
@@ -276,7 +276,7 @@ void InitGoogleLoggingSafe(const char* arg) {
   // File logging: on.
   // Stderr logging threshold: FLAGS_stderrthreshold.
   // Sink logging: off.
-  initial_stderr_severity = FLAGS_stderrthreshold;
+  initial_stderr_severity = static_cast<google::LogSeverity>(FLAGS_stderrthreshold);
 
   // Ignore SIGPIPE early in the startup process so that threads writing to TLS
   // sockets do not crash when writing to a closed socket. See KUDU-1910.
@@ -393,8 +393,11 @@ Status DeleteExcessLogFiles(Env* env) {
   for (int severity = 0; severity < google::NUM_SEVERITIES; ++severity) {
     // Build glob pattern for input
     // e.g. /var/log/kudu/kudu-master.*.INFO.*
-    string pattern = Substitute("$0/$1.*.$2.*", FLAGS_log_dir, FLAGS_log_filename,
-                                google::GetLogSeverityName(severity));
+    string pattern =
+        Substitute("$0/$1.*.$2.*",
+                   FLAGS_log_dir,
+                   FLAGS_log_filename,
+                   google::GetLogSeverityName(static_cast<google::LogSeverity>(severity)));
 
     // Keep the 'max_log_files' most recent log files, as compared by
     // modification time. Glog files contain a second-granularity timestamp in

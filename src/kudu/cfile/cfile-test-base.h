@@ -24,6 +24,7 @@
 #include <vector>
 
 #include <glog/logging.h>
+#include <gflags/gflags.h>
 
 #include "kudu/cfile/cfile.pb.h"
 #include "kudu/cfile/cfile_reader.h"

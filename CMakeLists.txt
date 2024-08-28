@@ -1016,6 +1016,9 @@ ADD_THIRDPARTY_LIB(glog
   DEPS "${GLOG_DEPS}")
 list(APPEND KUDU_BASE_LIBS glog)
 
+# target_compile_definitions(...) can't be used due to codegen compilation
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DGLOG_USE_GLOG_EXPORT")
+
 ## libunwind
 ##
 ## Doesn't build on OSX.

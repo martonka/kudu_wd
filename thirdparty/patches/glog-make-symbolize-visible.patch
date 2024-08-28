@@ -1,0 +1,35 @@
+diff -ruN a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt	2024-08-28 11:29:14.803606656 +0200
++++ b/CMakeLists.txt	2024-08-28 11:29:00.759312802 +0200
+@@ -356,6 +356,7 @@
+   src/glog/types.h
+   src/glog/flags.h
+   src/glog/vlog_is_on.h
++  src/glog/symbolize_unhidden.h
+ )
+ 
+ set (GLOG_SRCS
+diff -ruN a/src/glog/symbolize_unhidden.h b/src/glog/symbolize_unhidden.h
+--- a/src/glog/symbolize_unhidden.h	1970-01-01 01:00:00.000000000 +0100
++++ b/src/glog/symbolize_unhidden.h	2024-08-28 11:29:00.987317573 +0200
+@@ -0,0 +1,5 @@
++#pragma once
++namespace google {
++bool SymbolizeUnhidden(void* pc, char* out, size_t out_size);
++}
++
+diff -ruN a/src/symbolize.cc b/src/symbolize.cc
+--- a/src/symbolize.cc	2024-08-28 11:29:14.811606823 +0200
++++ b/src/symbolize.cc	2024-08-28 11:29:00.803313723 +0200
+@@ -963,6 +963,11 @@
+ }
+ 
+ }  // namespace glog_internal_namespace_
++   
++bool SymbolizeUnhidden(void* pc, char* out, size_t out_size) {
++  return Symbolize(pc, out, out_size, SymbolizeOptions::kNone);
++}
++
+ }  // namespace google
+ 
+ #endif

@@ -71,7 +71,8 @@
       TRACE_EVENT_CATEGORY_GROUP_ENABLED(category, &enabled);         \
       enabled || VLOG_IS_ON(vlevel);                                  \
     } ) ? static_cast<void>(0) :                                      \
-          google::LogMessageVoidify() & VLOG_AND_TRACE_INTERNAL(category, vlevel) // NOLINT(*)
+          google::logging::internal::LogMessageVoidify()              \
+            & VLOG_AND_TRACE_INTERNAL(category, vlevel) // NOLINT(*)
 
 #define VLOG_AND_TRACE_WITH_PREFIX(category, vlevel) \
   VLOG_AND_TRACE(category, vlevel) << LogPrefix()

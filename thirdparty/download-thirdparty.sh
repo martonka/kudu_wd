@@ -170,13 +170,12 @@ fetch_and_patch() {
 mkdir -p $TP_SOURCE_DIR
 cd $TP_SOURCE_DIR
 
-GLOG_PATCHLEVEL=2
+GLOG_PATCHLEVEL=1
 fetch_and_patch \
  glog-${GLOG_VERSION}.tar.gz \
  $GLOG_SOURCE \
  $GLOG_PATCHLEVEL \
- "patch -p1 < $TP_DIR/patches/glog-make-internals-visible.patch" \
- "patch -p1 < $TP_DIR/patches/glog-support-stacktrace-for-aarch64.patch"
+ "patch -p1 < $TP_DIR/patches/glog-make-symbolize-visible.patch"
 
 GMOCK_PATCHLEVEL=1
 fetch_and_patch \
