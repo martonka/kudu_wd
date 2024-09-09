@@ -1,6 +1,6 @@
 diff -ruN a/CMakeLists.txt b/CMakeLists.txt
---- a/CMakeLists.txt	2024-08-28 11:29:14.803606656 +0200
-+++ b/CMakeLists.txt	2024-08-28 11:29:00.759312802 +0200
+--- a/CMakeLists.txt	2024-09-09 14:03:09.864448817 +0200
++++ b/CMakeLists.txt	2024-09-09 14:06:22.664057872 +0200
 @@ -356,6 +356,7 @@
    src/glog/types.h
    src/glog/flags.h
@@ -11,17 +11,28 @@ diff -ruN a/CMakeLists.txt b/CMakeLists.txt
  set (GLOG_SRCS
 diff -ruN a/src/glog/symbolize_unhidden.h b/src/glog/symbolize_unhidden.h
 --- a/src/glog/symbolize_unhidden.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/src/glog/symbolize_unhidden.h	2024-08-28 11:29:00.987317573 +0200
-@@ -0,0 +1,5 @@
++++ b/src/glog/symbolize_unhidden.h	2024-09-09 14:07:02.320812723 +0200
+@@ -0,0 +1,8 @@
 +#pragma once
++#if defined(GLOG_USE_GLOG_EXPORT)
++#  include "glog/export.h"
++#endif
 +namespace google {
-+bool SymbolizeUnhidden(void* pc, char* out, size_t out_size);
++GLOG_EXPORT bool SymbolizeUnhidden(void* pc, char* out, size_t out_size);
 +}
 +
 diff -ruN a/src/symbolize.cc b/src/symbolize.cc
---- a/src/symbolize.cc	2024-08-28 11:29:14.811606823 +0200
-+++ b/src/symbolize.cc	2024-08-28 11:29:00.803313723 +0200
-@@ -963,6 +963,11 @@
+--- a/src/symbolize.cc	2024-09-09 14:03:09.876449028 +0200
++++ b/src/symbolize.cc	2024-09-09 14:07:54.897813474 +0200
+@@ -53,6 +53,7 @@
+ #endif  // GLOG_BUILD_CONFIG_INCLUDE
+ 
+ #include "symbolize.h"
++#include "glog/symbolize_unhidden.h"
+ 
+ #include "utilities.h"
+ 
+@@ -963,6 +964,11 @@
  }
  
  }  // namespace glog_internal_namespace_
