@@ -32,9 +32,7 @@ if [[ -f "/usr/bin/yum" ]]; then
   # Update the repo.
   yum update -y
 
-  if command -v lsb_release &> /dev/null; then
-    OS_MAJOR_VERSION=$(lsb_release -rs | cut -f1 -d.)
-  elif [ -e /etc/os-release ]; then
+  if [ -e /etc/os-release ]; then
     source /etc/os-release
     OS_MAJOR_VERSION=$(echo $VERSION_ID | cut -f1 -d.)
   else
@@ -90,18 +88,15 @@ if [[ -f "/usr/bin/yum" ]]; then
 
   # We need to enable the PowerTools repository on versions 8.0 and newer
   # to install the ninja-build package.
-  if [[ "$OS_MAJOR_VERSION" -gt "7" ]]; then
-    yum install -y 'dnf-command(config-manager)'
-    if yum repolist all | grep -q  codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms; then
-      # public cloud
-      yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms
-    else
-      yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-$(arch)-rpms
-    fi
+  yum install -y 'dnf-command(config-manager)'
+  if yum repolist all | grep -q  codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms; then
+    # public cloud
+    yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms
+  else
+    yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-$(arch)-rpms
   fi
 
   # Install libraries often used for Kudu development and build performance.
-
 
   if [[ "$OS_MAJOR_VERSION" -lt "9" ]]; then
     yum install -y epel-release
