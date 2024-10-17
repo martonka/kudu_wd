@@ -92,15 +92,11 @@ if [[ -f "/usr/bin/yum" ]]; then
   # to install the ninja-build package.
   if [[ "$OS_MAJOR_VERSION" -gt "7" ]]; then
     yum install -y 'dnf-command(config-manager)'
-    if [[ "$OS_MAJOR_VERSION" -gt "8" ]]; then
-      if yum repolist all | grep -q  codeready-builder-for-rhel-9-rhui-rpms; then
-        # public cloud
-        yum config-manager --set-enabled codeready-builder-for-rhel-9-rhui-rpms
-      else
-        yum config-manager --set-enabled codeready-builder-for-rhel-9-$(arch)-rpms
-      fi
+    if yum repolist all | grep -q  codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms; then
+      # public cloud
+      yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms
     else
-      yum config-manager --set-enabled powertools
+      yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-$(arch)-rpms
     fi
   fi
 
@@ -125,12 +121,7 @@ if [[ -f "/usr/bin/yum" ]]; then
   #  ruby-devel \
   #  zlib-devel
 
-  # To build on a version older than 8.0, the Red Hat Developer Toolset
-  # must be installed (in order to have access to a C++17 capable compiler).
-  if [[ "$OS_MAJOR_VERSION" -lt "8" ]]; then
-    yum install -y centos-release-scl-rh
-    yum install -y devtoolset-8
-  fi
+  yum groupinstall -y "Development Tools"
 
   # Reduce the image size by cleaning up after the install.
   yum clean all
