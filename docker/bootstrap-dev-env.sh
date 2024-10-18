@@ -32,6 +32,14 @@ if [[ -f "/usr/bin/yum" ]]; then
   # Update the repo.
   yum update -y
 
+  if [ -e /etc/os-release ]; then
+    source /etc/os-release
+    OS_MAJOR_VERSION=$(echo $VERSION_ID | cut -f1 -d.)
+  else
+    echo "Unable to get RHEL version"
+    exit 1
+  fi
+
   # Install core build libraries.
   yum install -y \
     autoconf \
@@ -55,7 +63,6 @@ if [[ -f "/usr/bin/yum" ]]; then
     openssl-devel \
     patch \
     pkgconfig \
-    redhat-lsb-core \
     rsync \
     sudo \
     unzip \
@@ -63,8 +70,10 @@ if [[ -f "/usr/bin/yum" ]]; then
     which \
     wget
 
-  # Get the major version for version specific package logic below.
-  OS_MAJOR_VERSION=$(lsb_release -rs | cut -f1 -d.)
+
+  if [[ "$OS_MAJOR_VERSION" -ge "9" ]]; then
+    yum install -y  krb5-libs krb5-devel
+  fi
 
   # Install exta impala packages for the impala images. They are nominal in size.
   # --no-install-recommends keeps the install smaller
@@ -75,13 +84,19 @@ if [[ -f "/usr/bin/yum" ]]; then
 
   # We need to enable the PowerTools repository on versions 8.0 and newer
   # to install the ninja-build package.
-  if [[ "$OS_MAJOR_VERSION" -gt "7" ]]; then
-    yum install -y 'dnf-command(config-manager)'
-    yum config-manager --set-enabled powertools
+  yum install -y 'dnf-command(config-manager)'
+  if yum repolist all | grep -q  codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms; then
+    # public cloud
+    yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-rhui-rpms
+  else
+    yum config-manager --set-enabled codeready-builder-for-rhel-$OS_MAJOR_VERSION-$(arch)-rpms
   fi
 
   # Install libraries often used for Kudu development and build performance.
-  yum install -y epel-release
+
+  if [[ "$OS_MAJOR_VERSION" -lt "9" ]]; then
+    yum install -y epel-release
+  fi
   yum install -y \
     ccache \
     cmake \
@@ -97,12 +112,7 @@ if [[ -f "/usr/bin/yum" ]]; then
   #  ruby-devel \
   #  zlib-devel
 
-  # To build on a version older than 8.0, the Red Hat Developer Toolset
-  # must be installed (in order to have access to a C++17 capable compiler).
-  if [[ "$OS_MAJOR_VERSION" -lt "8" ]]; then
-    yum install -y centos-release-scl-rh
-    yum install -y devtoolset-8
-  fi
+  yum groupinstall -y "Development Tools"
 
   # Reduce the image size by cleaning up after the install.
   yum clean all
