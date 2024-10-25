@@ -1,0 +1,14 @@
+diff --git a/src/demangle.cc b/src/demangle.cc
+index 9902c1e..43d935c 100644
+--- a/src/demangle.cc
++++ b/src/demangle.cc
+@@ -1351,6 +1351,9 @@ bool Demangle(const char* mangled, char* out, size_t out_size) {
+   }
+ 
+   std::copy_n(unmangled.get(), std::min(n, out_size), out);
++  if(n > out_size) {
++    out[out_size-1] = '\0';
++  }
+   return status == 0;
+ #else
+   State state;
