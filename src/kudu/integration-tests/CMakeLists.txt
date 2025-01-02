@@ -154,6 +154,7 @@ ADD_KUDU_TEST(webserver-crawl-itest LABELS no_dist_test)
 ADD_KUDU_TEST(webserver-stress-itest RUN_SERIAL true)
 ADD_KUDU_TEST(write_limit-itest)
 ADD_KUDU_TEST(write_throttling-itest)
+ADD_KUDU_TEST(mz-itest)
 
 # The scenarios in client-stress-test are used for benchmarking and stress
 # testing of the client meta-cache. These are CPU and memory intensive, and
