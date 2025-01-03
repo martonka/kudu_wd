@@ -1776,6 +1776,12 @@ void ConsensusServiceImpl::UpdateConsensus(const ConsensusRequestPB* req,
   context->RespondSuccess();
 }
 
+void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::MultiRaftConsensusRequestPB* req,
+                                                    class consensus::MultiRaftConsensusResponsePB* resp,
+                                                    rpc::RpcContext* context) {
+
+}
+
 void ConsensusServiceImpl::RequestConsensusVote(const VoteRequestPB* req,
                                                 VoteResponsePB* resp,
                                                 RpcContext* context) {
