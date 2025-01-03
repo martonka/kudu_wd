@@ -416,6 +416,13 @@ message ConsensusResponsePB {
   optional tserver.TabletServerErrorPB error = 999;
 }
 
+message MultiRaftConsensusRequestPB {
+  repeated ConsensusRequestPB consensus_requests = 1;
+}
+message MultiRaftConsensusResponsePB {
+  repeated ConsensusResponsePB consensus_responses = 1;
+}
+
 // A message reflecting the status of an in-flight op.
 message OpStatusPB {
   required OpId op_id = 1;
@@ -586,6 +593,9 @@ service ConsensusService {
 
   // Analogous to AppendEntries in Raft, but only used for followers.
   rpc UpdateConsensus(ConsensusRequestPB) returns (ConsensusResponsePB);
+
+  // Batched call of ConsensusRequestPB. Only exists for performance reasons 
+  rpc MultiRaftUpdateConsensus(MultiRaftConsensusRequestPB) returns (MultiRaftConsensusResponsePB);
 
   // RequestVote() from Raft.
   rpc RequestConsensusVote(VoteRequestPB) returns (VoteResponsePB);
