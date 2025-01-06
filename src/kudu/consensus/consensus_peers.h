@@ -49,6 +49,7 @@ namespace consensus {
 class PeerMessageQueue;
 class PeerProxy;
 class PeerProxyFactory;
+class MultiRaftHeartbeatBatcher;
 
 // A remote peer in consensus.
 //
@@ -118,6 +119,7 @@ class Peer :
                             std::string tablet_id,
                             std::string leader_uuid,
                             PeerMessageQueue* queue,
+                            std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
                             ThreadPoolToken* raft_pool_token,
                             PeerProxyFactory* peer_proxy_factory,
                             std::shared_ptr<Peer>* peer);
@@ -127,6 +129,7 @@ class Peer :
        std::string tablet_id,
        std::string leader_uuid,
        PeerMessageQueue* queue,
+       std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
        ThreadPoolToken* raft_pool_token,
        PeerProxyFactory* peer_proxy_factory);
 
@@ -200,6 +203,8 @@ class Peer :
   rpc::RpcController controller_;
 
   std::shared_ptr<rpc::Messenger> messenger_;
+
+  std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher_;
 
   // Thread pool token used to construct requests to this peer.
   //

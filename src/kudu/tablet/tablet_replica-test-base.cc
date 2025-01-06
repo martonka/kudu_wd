@@ -178,6 +178,7 @@ Status TabletReplicaTestBase::StartReplica(const ConsensusBootstrapInfo& info) {
                                 messenger_,
                                 scoped_refptr<ResultTracker>(),
                                 log,
+                                nullptr,
                                 prepare_pool_.get(),
                                 dns_resolver_.get());
 }
@@ -223,6 +224,7 @@ Status TabletReplicaTestBase::RestartReplica(bool reset_tablet) {
                                        messenger_,
                                        scoped_refptr<ResultTracker>(),
                                        log,
+                                       nullptr,
                                        prepare_pool_.get(),
                                        dns_resolver_.get()));
   // Wait for the replica to be usable.
