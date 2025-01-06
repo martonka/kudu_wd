@@ -51,6 +51,7 @@
 #include "kudu/consensus/consensus_peers.h"
 #include "kudu/consensus/log.h"
 #include "kudu/consensus/log_anchor_registry.h"
+#include "kudu/consensus/multi_raft_batcher.h"
 #include "kudu/consensus/opid.pb.h"
 #include "kudu/consensus/opid_util.h"
 #include "kudu/consensus/quorum_util.h"
@@ -481,6 +482,8 @@ Status SysCatalogTable::SetupTablet(
   } while (0)
 
   InitLocalRaftPeerPB();
+  multi_raft_manager_ = std::make_unique<consensus::MultiRaftManager>(master_->messenger(),
+                                                                      master_->dns_resolver());
   scoped_refptr<ConsensusMetadata> cmeta;
   RETURN_NOT_OK(cmeta_manager_->Load(metadata->tablet_id(), &cmeta));
 
@@ -536,6 +539,7 @@ Status SysCatalogTable::SetupTablet(
       master_->messenger(),
       /*result_tracker*/nullptr,
       log,
+      multi_raft_manager_.get(),
       master_->tablet_prepare_pool(),
       master_->dns_resolver()), "failed to start system catalog replica");
 

@@ -16,6 +16,7 @@
 // under the License.
 
 #include "kudu/consensus/consensus_peers.h"
+#include "kudu/consensus/multi_raft_batcher.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -83,6 +84,15 @@ TAG_FLAG(enable_tablet_copy, unsafe);
 
 DECLARE_int32(raft_heartbeat_interval_ms);
 
+DECLARE_bool(enable_multi_raft_heartbeat_batcher);
+// Metrics
+METRIC_DEFINE_counter(server, time_spend_on_processing_peer_heartbeat_ms, 
+                      "Time spent on processing Peer heartbeat RPCs",
+                      kudu::MetricUnit::kOperations,
+                      "Time spent on processing Peer heartbeat RPCs in millisecs",
+                      kudu::MetricLevel::kInfo);
+
+
 using kudu::pb_util::SecureShortDebugString;
 using kudu::rpc::Messenger;
 using kudu::rpc::PeriodicTimer;
@@ -106,6 +116,7 @@ void Peer::NewRemotePeer(RaftPeerPB peer_pb,
                          string tablet_id,
                          string leader_uuid,
                          PeerMessageQueue* queue,
+                         std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher, 
                          ThreadPoolToken* raft_pool_token,
                          PeerProxyFactory* peer_proxy_factory,
                          shared_ptr<Peer>* peer) {
@@ -114,6 +125,7 @@ void Peer::NewRemotePeer(RaftPeerPB peer_pb,
       std::move(tablet_id),
       std::move(leader_uuid),
       queue,
+      multi_raft_batcher,
       raft_pool_token,
       peer_proxy_factory));
   new_peer->Init();
@@ -124,6 +136,7 @@ Peer::Peer(RaftPeerPB peer_pb,
            string tablet_id,
            string leader_uuid,
            PeerMessageQueue* queue,
+           std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
            ThreadPoolToken* raft_pool_token,
            PeerProxyFactory* peer_proxy_factory)
     : tablet_id_(std::move(tablet_id)),
@@ -134,6 +147,7 @@ Peer::Peer(RaftPeerPB peer_pb,
                   peer_pb_.last_known_addr().host(), peer_pb_.last_known_addr().port())),
       peer_proxy_factory_(peer_proxy_factory),
       queue_(queue),
+      multi_raft_batcher_(multi_raft_batcher),
       failed_attempts_(0),
       messenger_(peer_proxy_factory_->messenger()),
       raft_pool_token_(raft_pool_token),
@@ -292,13 +306,22 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   request_pending_ = true;
   l.unlock();
 
-  // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
-  // that this object outlives the RPC.
+  if (request_.ops_size() == 0 && multi_raft_batcher_
+    && FLAGS_enable_multi_raft_heartbeat_batcher) {
+    auto this_ptr = shared_from_this();
+    response_.mutable_status()->Swap(new ConsensusStatusPB());
+    multi_raft_batcher_->AddRequestToBatch(&request_, &response_,
+                                         [this_ptr](){this_ptr->ProcessResponse();});
+  } else {
   shared_ptr<Peer> s_this = shared_from_this();
   proxy_->UpdateAsync(request_, &response_, &controller_,
                       [s_this]() {
                         s_this->ProcessResponse();
                       });
+
+  }
+  // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
+  // that this object outlives the RPC.
 }
 
 void Peer::StartElection() {

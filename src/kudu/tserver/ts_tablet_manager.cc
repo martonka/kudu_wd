@@ -43,6 +43,7 @@
 #include "kudu/consensus/log.h"
 #include "kudu/consensus/log_anchor_registry.h"
 #include "kudu/consensus/metadata.pb.h"
+#include "kudu/consensus/multi_raft_batcher.h"
 #include "kudu/consensus/opid.pb.h"
 #include "kudu/consensus/opid_util.h"
 #include "kudu/consensus/quorum_util.h"
@@ -515,6 +516,9 @@ Status TSTabletManager::Init(Timer* start_tablets,
   RETURN_NOT_OK(fs_manager_->ListTabletIds(&tablet_ids));
 
   InitLocalRaftPeerPB();
+
+  multi_raft_manager_ = std::make_unique<consensus::MultiRaftManager>(server_->messenger(),
+                                                                      server_->dns_resolver());
 
   vector<scoped_refptr<TabletMetadata>> metas(tablet_ids.size());
 
@@ -1433,6 +1437,7 @@ void TSTabletManager::OpenTablet(const scoped_refptr<tablet::TabletReplica>& rep
                        server_->messenger(),
                        server_->result_tracker(),
                        log,
+                       multi_raft_manager_.get(),
                        server_->tablet_prepare_pool(),
                        server_->dns_resolver());
     if (!s.ok()) {

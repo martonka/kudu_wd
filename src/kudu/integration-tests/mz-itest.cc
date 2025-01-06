@@ -68,6 +68,7 @@ using strings::Substitute;
 namespace cfs = std::filesystem;
 using namespace std::chrono_literals;
 
+DECLARE_bool(enable_multi_raft_heartbeat_batcher);
 DECLARE_int32(heartbeat_interval_ms);
 DECLARE_bool(log_preallocate_segments);
 
@@ -142,6 +143,7 @@ void CreateTableStressTest::CreateBigTable(const string& table_name, int num_tab
 }
 
 TEST_F(CreateTableStressTest, CreateAndRun) {
+  FLAGS_enable_multi_raft_heartbeat_batcher = 1;
   constexpr int kNumTestTablets = 1;
   string table_name = "test_table";
   NO_FATALS(CreateBigTable(table_name, kNumTestTablets));
