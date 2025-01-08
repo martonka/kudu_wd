@@ -143,7 +143,7 @@ void CreateTableStressTest::CreateBigTable(const string& table_name, int num_tab
 }
 
 TEST_F(CreateTableStressTest, CreateAndRun) {
-  FLAGS_enable_multi_raft_heartbeat_batcher = 1;
+  FLAGS_enable_multi_raft_heartbeat_batcher = true;
   constexpr int kNumTestTablets = 1;
   string table_name = "test_table";
   NO_FATALS(CreateBigTable(table_name, kNumTestTablets));
