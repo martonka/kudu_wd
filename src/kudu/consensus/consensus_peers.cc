@@ -306,18 +306,18 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   request_pending_ = true;
   l.unlock();
 
-  if (request_.ops_size() == 0 && multi_raft_batcher_
-    && FLAGS_enable_multi_raft_heartbeat_batcher) {
-    auto this_ptr = shared_from_this();
+  shared_ptr<Peer> s_this = shared_from_this();
+  if (FLAGS_enable_multi_raft_heartbeat_batcher && 
+    request_.ops_size() == 0 && multi_raft_batcher_) {
     response_.mutable_status()->Swap(new ConsensusStatusPB());
     multi_raft_batcher_->AddRequestToBatch(&request_, &response_,
-                                         [this_ptr](){this_ptr->ProcessResponse();});
+                                         [s_this](){s_this->ProcessResponse();});
   } else {
-  shared_ptr<Peer> s_this = shared_from_this();
-  proxy_->UpdateAsync(request_, &response_, &controller_,
-                      [s_this]() {
-                        s_this->ProcessResponse();
-                      });
+    // Todo check if there is an empty hearthbeat queued up
+    proxy_->UpdateAsync(request_, &response_, &controller_,
+                        [s_this]() {
+                          s_this->ProcessResponse();
+                        });
 
   }
   // Capture a shared_ptr reference into the RPC callback so that we're guaranteed

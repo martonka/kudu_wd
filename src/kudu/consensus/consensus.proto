@@ -416,11 +416,46 @@ message ConsensusResponsePB {
   optional tserver.TabletServerErrorPB error = 999;
 }
 
-message MultiRaftConsensusRequestPB {
-  repeated ConsensusRequestPB consensus_requests = 1;
+// Same as ConsensusRequestPB. Bud dest_uuid and tablet_id is shared between
+// messages in MultiRaftConsensusRequestPB
+message BatchedNoOpConsensusRequestPB {
+
+  required string tablet_id = 1;
+
+  required int64 caller_term = 3;
+
+  optional OpId preceding_id = 4;
+
+  optional int64 committed_index = 8;
+
+  optional int64 all_replicated_index = 9;
+
+  optional fixed64 safe_timestamp = 10;
+
+  optional int64 last_idx_appended_to_leader = 11;
 }
+
+message MultiRaftConsensusRequestPB {
+  // UUID of server this request is addressed to.
+  repeated BatchedNoOpConsensusRequestPB consensus_requests = 1;
+  optional bytes dest_uuid = 2;
+  required bytes caller_uuid = 3;
+}
+
+message BatchedNoOpConsensusResponsePB {
+  optional int64 responder_term = 1;
+  optional ConsensusStatusPB status = 2;
+  optional bool server_quiescing = 3;
+
+  optional tserver.TabletServerErrorPB error = 999;
+}
+
 message MultiRaftConsensusResponsePB {
-  repeated ConsensusResponsePB consensus_responses = 1;
+  repeated BatchedNoOpConsensusResponsePB consensus_responses = 1;
+  optional bytes responder_uuid = 2;
+  
+  // For errors shared between tablets (e.g wrong caller id)
+  optional tserver.TabletServerErrorPB error = 999;
 }
 
 // A message reflecting the status of an in-flight op.

@@ -1779,6 +1779,10 @@ void ConsensusServiceImpl::UpdateConsensus(const ConsensusRequestPB* req,
 void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::MultiRaftConsensusRequestPB* req,
                                                     class consensus::MultiRaftConsensusResponsePB* resp,
                                                     rpc::RpcContext* context) {
+  DVLOG(3) << "Received Batched Consensus Update RPC: " << SecureDebugString(*req);
+  if (!CheckUuidMatchOrRespond(tablet_manager_, "UpdateConsensus", req, resp, context)) {
+    return;
+  }
 
 }
 

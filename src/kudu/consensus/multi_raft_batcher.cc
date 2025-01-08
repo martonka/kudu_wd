@@ -40,7 +40,7 @@ using namespace std::literals;
 using namespace std::placeholders;
 
 DEFINE_int32(multi_raft_heartbeat_interval_ms,
-             100,
+             500,
              "The heartbeat interval for batch Raft replication.");
 TAG_FLAG(multi_raft_heartbeat_interval_ms, experimental);
 TAG_FLAG(multi_raft_heartbeat_interval_ms, hidden);
@@ -66,6 +66,21 @@ using kudu::DnsResolver;
 class ConsensusServiceProxy;
 typedef std::unique_ptr<ConsensusServiceProxy> ConsensusServiceProxyPtr;
 
+namespace {
+  BatchedNoOpConsensusRequestPB ToBatchRequest(const ConsensusRequestPB& req) {
+    BatchedNoOpConsensusRequestPB res;
+
+    res.set_tablet_id(req.tablet_id());
+    res.set_caller_term(req.caller_term());
+    *res.mutable_preceding_id() = req.preceding_id();
+    res.set_committed_index(req.committed_index());
+    res.set_all_replicated_index(req.all_replicated_index());
+    res.set_safe_timestamp(req.safe_timestamp());
+    res.set_last_idx_appended_to_leader(req.last_idx_appended_to_leader());
+
+    return res;  
+  }
+}
 struct MultiRaftHeartbeatBatcher::MultiRaftConsensusData  {
   MultiRaftConsensusRequestPB batch_req;
   MultiRaftConsensusResponsePB batch_res;
@@ -98,13 +113,29 @@ MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 void MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
                                                   ConsensusResponsePB* response,
                                                   HeartbeatResponseCallback callback) {
+  std::string reqs = request->DebugString();
   std::shared_ptr<MultiRaftConsensusData> data = nullptr;
   VLOG(1) << "Adding request to batch ";
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (request->has_caller_uuid()) {
+      if (!current_batch_->batch_req.has_caller_uuid()) {
+        current_batch_->batch_req.set_caller_uuid(request->caller_uuid());
+      }
+      DCHECK(request->caller_uuid() == current_batch_->batch_req.caller_uuid());
+    }
+
+    if (request->has_dest_uuid()) {
+      if (!current_batch_->batch_req.has_dest_uuid()) {
+        current_batch_->batch_req.set_dest_uuid(request->dest_uuid());
+      }
+      DCHECK(request->dest_uuid() == current_batch_->batch_req.dest_uuid());
+    }
+
     current_batch_->response_callback_data.push_back({response, std::move(callback)});
     // Add a ConsensusRequestPB to the batch
-    current_batch_->batch_req.add_consensus_requests()->Swap(request);
+    *current_batch_->batch_req.add_consensus_requests() = ToBatchRequest(*request);
+
     if (FLAGS_multi_raft_batch_size > 0 &&
         current_batch_->response_callback_data.size() >= FLAGS_multi_raft_batch_size) {
       data = PrepareNextBatchRequest();
@@ -141,15 +172,11 @@ void MultiRaftHeartbeatBatcher::SendBatchRequest(std::shared_ptr<MultiRaftConsen
   }
   VLOG(1) << "Sending BatchRequest";
   data->controller.Reset();
+  // should we just add a separate flag?
   data->controller.set_timeout(MonoDelta::FromMilliseconds(
-      FLAGS_consensus_rpc_timeout_ms * data->batch_req.consensus_requests_size()));
+      FLAGS_consensus_rpc_timeout_ms));
 
   DCHECK(data->batch_req.IsInitialized());
-  for (auto& request : data->batch_req.consensus_requests()) {
-    DCHECK(request.IsInitialized());
-    DCHECK(request.caller_uuid() != "");
-    DCHECK(request.tablet_id() != "");
-  }
 
   consensus_proxy_->MultiRaftUpdateConsensusAsync(
       data->batch_req,
@@ -158,10 +185,7 @@ void MultiRaftHeartbeatBatcher::SendBatchRequest(std::shared_ptr<MultiRaftConsen
       [data,inst=shared_from_this()](){
         inst->MultiRaftUpdateHeartbeatResponseCallback(data);
       }
-//      std::bind(&MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback,
-//                shared_from_this(),
-//                data)
-      );
+  );
 }
 
 void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
@@ -174,7 +198,8 @@ void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
   for (int i = 0; i < data->batch_req.consensus_requests_size(); i++) {
     auto callback_data = data->response_callback_data[i];
     // todo check local status
-    callback_data.resp->Swap(data->batch_res.mutable_consensus_responses(i));
+    // mzzzz
+    //callback_data.resp->Swap(data->batch_res.mutable_consensus_responses(i));
 
     LOG(INFO) << "calling multiraftupdateheartbeatresponse callback and is init:" << callback_data.resp->IsInitialized() << std::endl;
     callback_data.callback();
