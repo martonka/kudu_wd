@@ -191,6 +191,7 @@ void MultiRaftHeartbeatBatcher::SendBatchRequest(std::shared_ptr<MultiRaftConsen
 void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
     std::shared_ptr<MultiRaftConsensusData> data) {
   auto status = data->controller.status();
+  auto ss = data->batch_res.DebugString();
   if (!status.ok()) {
     LOG(INFO) << "MultiRaftUpdate not ok, status: " << status.ToString() << std::endl;
     return;
