@@ -261,6 +261,25 @@ extern const char* CFILE_CACHE_MISS_BYTES_METRIC_NAME;
 extern const char* CFILE_CACHE_HIT_BYTES_METRIC_NAME;
 }
 
+namespace {
+  consensus::ConsensusRequestPB ToSingleRequest(
+    const consensus::MultiRaftConsensusRequestPB& parent_req,
+    const consensus::BatchedNoOpConsensusRequestPB& req) {
+    consensus::ConsensusRequestPB res;
+
+    res.set_dest_uuid(parent_req.dest_uuid());
+    res.set_caller_uuid(parent_req.caller_uuid());
+    res.set_tablet_id(req.tablet_id());
+    res.set_caller_term(req.caller_term());
+    *res.mutable_preceding_id() = req.preceding_id();
+    res.set_committed_index(req.committed_index());
+    res.set_all_replicated_index(req.all_replicated_index());
+    res.set_safe_timestamp(req.safe_timestamp());
+    res.set_last_idx_appended_to_leader(req.last_idx_appended_to_leader());
+
+    return res;  
+  }
+}
 namespace tserver {
 
 const char* SCANNER_BYTES_READ_METRIC_NAME = "scanner_bytes_read";
@@ -294,24 +313,31 @@ bool LookupTabletReplicaOrRespond(TabletReplicaLookupIf* tablet_manager,
   return true;
 }
 
-template<class RespClass>
-void RespondTabletNotRunning(const scoped_refptr<TabletReplica>& replica,
-                             TabletStatePB tablet_state,
-                             RespClass* resp,
-                             RpcContext* context) {
+std::pair<Status, TabletServerErrorPB::Code> GetTabletNotRunningCode(
+  const scoped_refptr<TabletReplica>& replica,
+  const TabletStatePB& tablet_state
+  ) {
   Status s = Status::IllegalState("Tablet not RUNNING",
                                   tablet::TabletStatePB_Name(tablet_state));
-  auto error_code = TabletServerErrorPB::TABLET_NOT_RUNNING;
   if (replica->tablet_metadata()->tablet_data_state() == TABLET_DATA_TOMBSTONED ||
       replica->tablet_metadata()->tablet_data_state() == TABLET_DATA_DELETED) {
     // Treat tombstoned tablets as if they don't exist for most purposes.
     // This takes precedence over failed, since we don't reset the failed
     // status of a TabletReplica when deleting it. Only tablet copy does that.
-    error_code = TabletServerErrorPB::TABLET_NOT_FOUND;
+    return {s, TabletServerErrorPB::TABLET_NOT_FOUND};
   } else if (tablet_state == tablet::FAILED) {
     s = s.CloneAndAppend(replica->error().ToString());
-    error_code = TabletServerErrorPB::TABLET_FAILED;
+    return {s, TabletServerErrorPB::TABLET_FAILED};
   }
+  return {s, TabletServerErrorPB::TABLET_NOT_RUNNING}; 
+}
+
+template<class RespClass>
+void RespondTabletNotRunning(const scoped_refptr<TabletReplica>& replica,
+                             TabletStatePB tablet_state,
+                             RespClass* resp,
+                             RpcContext* context) {
+  auto [s, error_code] = GetTabletNotRunningCode(replica, tablet_state);
   SetupErrorAndRespond(resp->mutable_error(), s, error_code, context);
 }
 
@@ -1783,6 +1809,57 @@ void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::Multi
   if (!CheckUuidMatchOrRespond(tablet_manager_, "UpdateConsensus", req, resp, context)) {
     return;
   }
+  for(const auto& single_req: req->consensus_requests()) {
+    auto single_resp = resp->add_consensus_responses();
+    auto set_error = [single_resp](const Status& s, const TabletServerErrorPB::Code& error_code) {
+      auto error = single_resp->mutable_error();
+      StatusToPB(s, error->mutable_status());
+      error->set_code(error_code);
+    };
+    scoped_refptr<TabletReplica> replica;
+    Status s = tablet_manager_->GetTabletReplica(single_req.tablet_id(), &replica);
+    if (PREDICT_FALSE(!s.ok())) {
+      set_error(s, TabletServerErrorPB::TABLET_NOT_FOUND);
+      continue; // move to next request;
+    }
+
+    auto state = replica->state();
+    if (PREDICT_FALSE(state != tablet::RUNNING)) {
+      auto [s, error_code] = GetTabletNotRunningCode(replica, state);
+      set_error(s, error_code);
+      continue;
+    }
+    shared_ptr<RaftConsensus> consensus = replica->shared_consensus();
+
+    if (!consensus) {
+      set_error(Status::ServiceUnavailable("Raft Consensus unavailable",
+                                            "Tablet replica not initialized"),
+                                           TabletServerErrorPB::TABLET_NOT_RUNNING 
+      );
+      continue;
+    }
+    // mzzzzz Se if it can be optimized
+
+    const auto req2 = ToSingleRequest(*req, single_req);
+    auto resp2 = ConsensusResponsePB();
+    // mzzzzzzz we know that there is no op. So maybe make a simpler call. 
+    s = consensus->Update(&req2, &resp2);
+    if (PREDICT_FALSE(!s.ok())) {
+      // Clear the response first, since a partially-filled response could
+      // result in confusing a caller, or in having missing required fields
+      // in embedded optional messages.
+      single_resp->Clear();
+      set_error(s, TabletServerErrorPB::UNKNOWN_ERROR);
+      continue;
+    }
+    single_resp->set_responder_term(resp2.responder_term());
+    *single_resp->mutable_status() = resp2.status();
+    single_resp->set_server_quiescing(resp2.server_quiescing());
+    if (resp2.has_error()) {
+      *single_resp->mutable_error() = resp2.error();
+    }
+  }
+  context->RespondSuccess();
 
 }
 
