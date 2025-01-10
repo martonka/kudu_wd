@@ -1809,6 +1809,7 @@ void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::Multi
   if (!CheckUuidMatchOrRespond(tablet_manager_, "UpdateConsensus", req, resp, context)) {
     return;
   }
+  resp->set_responder_uuid(tablet_manager_->NodeInstance().permanent_uuid());
   for(const auto& single_req: req->consensus_requests()) {
     auto single_resp = resp->add_consensus_responses();
     auto set_error = [single_resp](const Status& s, const TabletServerErrorPB::Code& error_code) {

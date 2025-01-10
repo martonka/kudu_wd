@@ -136,12 +136,14 @@ class Peer :
  private:
   void SendNextRequest(bool even_if_queue_empty);
 
+  void ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB& resp);
+  void ProcessSingleResponse();
   // Signals that a response was received from the peer.
   //
   // This method is called from the reactor thread and calls
   // DoProcessResponse() on raft_pool_token_ to do any work that requires IO or
   // lock-taking.
-  void ProcessResponse();
+  void ProcessResponse(const rpc::RpcController& controller);
 
   // Run on 'raft_pool_token'. Does response handling that requires IO or may block.
   void DoProcessResponse();

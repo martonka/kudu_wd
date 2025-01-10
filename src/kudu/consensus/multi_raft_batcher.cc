@@ -203,7 +203,7 @@ void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
     //callback_data.resp->Swap(data->batch_res.mutable_consensus_responses(i));
 
     LOG(INFO) << "calling multiraftupdateheartbeatresponse callback and is init:" << callback_data.resp->IsInitialized() << std::endl;
-    callback_data.callback();
+    callback_data.callback(data->controller, data->batch_res, data->batch_res.consensus_responses(i));
   }
 }
 

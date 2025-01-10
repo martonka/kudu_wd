@@ -311,12 +311,13 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
     request_.ops_size() == 0 && multi_raft_batcher_) {
     response_.mutable_status()->Swap(new ConsensusStatusPB());
     multi_raft_batcher_->AddRequestToBatch(&request_, &response_,
-                                         [s_this](){s_this->ProcessResponse();});
+                                         [s_this](const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root,
+                                            const BatchedNoOpConsensusResponsePB& resp){ s_this->ProcessResponseFromBatch(controller, root, resp); });
   } else {
     // Todo check if there is an empty hearthbeat queued up
     proxy_->UpdateAsync(request_, &response_, &controller_,
                         [s_this]() {
-                          s_this->ProcessResponse();
+                          s_this->ProcessSingleResponse();
                         });
 
   }
@@ -356,7 +357,34 @@ void Peer::StartElection() {
     });
 }
 
-void Peer::ProcessResponse() {
+
+void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB& resp) {
+
+  response_.Clear();
+  if (root.has_error()) {
+    *response_.mutable_error() = root.error();
+  }
+  if (root.has_responder_uuid()) {
+    response_.set_responder_uuid(root.responder_uuid());
+  }
+  if (resp.has_responder_term()) {
+    response_.set_responder_term(resp.responder_term());
+  }
+  if (resp.has_status()) {
+    *response_.mutable_status() = resp.status();
+  }
+  if (resp.has_server_quiescing()) {
+    response_.set_server_quiescing(resp.server_quiescing());
+  }
+  
+  ProcessResponse(controller);
+}
+
+void Peer::ProcessSingleResponse() {
+  ProcessResponse(controller_);
+}
+
+void Peer::ProcessResponse(const rpc::RpcController& controller) {
   // Note: This method runs on the reactor thread.
   std::lock_guard lock(peer_lock_);
   if (PREDICT_FALSE(closed_)) {
@@ -367,7 +395,7 @@ void Peer::ProcessResponse() {
   MAYBE_FAULT(FLAGS_fault_crash_after_leader_request_fraction);
 
   // Process RpcController errors.
-  const auto controller_status = controller_.status();
+  const auto controller_status = controller.status();
   if (!controller_status.ok()) {
     auto ps = controller_status.IsRemoteError() ?
         PeerStatus::REMOTE_ERROR : PeerStatus::RPC_LAYER_ERROR;
