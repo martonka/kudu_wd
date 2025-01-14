@@ -34,10 +34,22 @@
 #include "kudu/consensus/consensus.pb.h"
 #include "kudu/consensus/consensus.proxy.h"
 #include "kudu/consensus/metadata.pb.h"
+#include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
 
 using namespace std::literals;
 using namespace std::placeholders;
+
+METRIC_DEFINE_counter(server, batched_heartbeat_count,
+                      "Heartbeat messages", kudu::MetricUnit::kRequests,
+                      "Number of heartbeat messages passed to Multi-Raft batcher",
+                      kudu::MetricLevel::kInfo);
+
+METRIC_DEFINE_counter(server, heartbeat_batch_count,
+                      "Heartbeat batch messages", kudu::MetricUnit::kRequests,
+                      "Number of heartbeat batch messages sent out",
+                      kudu::MetricLevel::kInfo);
+
 
 DEFINE_int32(multi_raft_heartbeat_interval_ms,
              500,
@@ -46,7 +58,7 @@ TAG_FLAG(multi_raft_heartbeat_interval_ms, experimental);
 TAG_FLAG(multi_raft_heartbeat_interval_ms, hidden);
 
 DEFINE_bool(enable_multi_raft_heartbeat_batcher,
-            false,
+            true,
             "Whether to enable the batching of raft heartbeats.");
 TAG_FLAG(enable_multi_raft_heartbeat_batcher, experimental);
 TAG_FLAG(enable_multi_raft_heartbeat_batcher, hidden);
@@ -59,6 +71,9 @@ DECLARE_int32(consensus_rpc_timeout_ms);
 
 namespace kudu {
 namespace consensus {
+
+scoped_refptr<Counter> batched_heartbeat_count;
+scoped_refptr<Counter> heartbeat_batch_count;
 
 using rpc::PeriodicTimer;
 using kudu::DnsResolver;
@@ -171,6 +186,9 @@ void MultiRaftHeartbeatBatcher::SendBatchRequest(std::shared_ptr<MultiRaftConsen
     return;
   }
   VLOG(1) << "Sending BatchRequest";
+  batched_heartbeat_count->IncrementBy(data->batch_req.consensus_requests_size());
+  heartbeat_batch_count->Increment();
+
   data->controller.Reset();
   // should we just add a separate flag?
   data->controller.set_timeout(MonoDelta::FromMilliseconds(
@@ -207,9 +225,12 @@ void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
   }
 }
 
-MultiRaftManager::MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger, kudu::DnsResolver* dns_resolver)
+MultiRaftManager::MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger, kudu::DnsResolver* dns_resolver, const scoped_refptr<MetricEntity>& entity)
     : messenger_(messenger),
-      dns_resolver_(dns_resolver) {}
+      dns_resolver_(dns_resolver) {
+        batched_heartbeat_count = METRIC_batched_heartbeat_count.Instantiate(entity);
+        heartbeat_batch_count = METRIC_heartbeat_batch_count.Instantiate(entity);
+      }
 
 MultiRaftHeartbeatBatcherPtr MultiRaftManager::AddOrGetBatcher(const kudu::consensus::RaftPeerPB& remote_peer_pb) {
   if (!FLAGS_enable_multi_raft_heartbeat_batcher) {

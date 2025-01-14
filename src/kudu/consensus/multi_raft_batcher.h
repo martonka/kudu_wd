@@ -109,7 +109,7 @@ using MultiRaftHeartbeatBatcherPtr = std::shared_ptr<MultiRaftHeartbeatBatcher>;
 class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
  public:
   MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
-                   kudu::DnsResolver* dns_resolver);
+                   kudu::DnsResolver* dns_resolver, const scoped_refptr<MetricEntity>& entity);
 
   // Add a batcher with the given hostport (if one does not already exist)
   // and returns the newly created batcher.
