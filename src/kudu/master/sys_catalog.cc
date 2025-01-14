@@ -483,7 +483,8 @@ Status SysCatalogTable::SetupTablet(
 
   InitLocalRaftPeerPB();
   multi_raft_manager_ = std::make_unique<consensus::MultiRaftManager>(master_->messenger(),
-                                                                      master_->dns_resolver());
+                                                                      master_->dns_resolver(),
+                                                                      master_->metric_entity());
   scoped_refptr<ConsensusMetadata> cmeta;
   RETURN_NOT_OK(cmeta_manager_->Load(metadata->tablet_id(), &cmeta));
 
