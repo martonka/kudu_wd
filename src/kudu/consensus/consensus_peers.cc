@@ -49,6 +49,7 @@
 #include "kudu/util/fault_injection.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/logging.h"
+#include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/net/net_util.h"
 #include "kudu/util/pb_util.h"
@@ -85,12 +86,6 @@ TAG_FLAG(enable_tablet_copy, unsafe);
 DECLARE_int32(raft_heartbeat_interval_ms);
 
 DECLARE_bool(enable_multi_raft_heartbeat_batcher);
-// Metrics
-METRIC_DEFINE_counter(server, time_spend_on_processing_peer_heartbeat_ms, 
-                      "Time spent on processing Peer heartbeat RPCs",
-                      kudu::MetricUnit::kOperations,
-                      "Time spent on processing Peer heartbeat RPCs in millisecs",
-                      kudu::MetricLevel::kInfo);
 
 
 using kudu::pb_util::SecureShortDebugString;
@@ -307,6 +302,10 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   l.unlock();
 
   shared_ptr<Peer> s_this = shared_from_this();
+
+  if (request_.ops_size() == 0 && multi_raft_batcher_) {
+    multi_raft_batcher_->IncrementNoOpPackageCounter();
+  }
   if (FLAGS_enable_multi_raft_heartbeat_batcher && 
     request_.ops_size() == 0 && multi_raft_batcher_) {
     response_.mutable_status()->Swap(new ConsensusStatusPB());

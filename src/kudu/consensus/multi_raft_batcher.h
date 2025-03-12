@@ -68,6 +68,8 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
                          ConsensusResponsePB* response,
                          HeartbeatResponseCallback callback);
 
+  void IncrementNoOpPackageCounter();
+
  private:
   // Tracks a single peers ConsensusResponsePB as well as its ProcessResponse callback.
   struct ResponseCallbackData {
@@ -98,6 +100,8 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   std::mutex mutex_;
 
   std::shared_ptr<MultiRaftConsensusData> current_batch_ GUARDED_BY(mutex_);
+  
+
 };
 
 using MultiRaftHeartbeatBatcherPtr = std::shared_ptr<MultiRaftHeartbeatBatcher>;
@@ -127,6 +131,7 @@ class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
   // MultiRaftBatchers will be shared for the same remote peer info.
   std::unordered_map<HostPort, std::weak_ptr<MultiRaftHeartbeatBatcher>,
                      HostPortHasher> batchers_ /*GUARDED_BY(mutex_)*/;
+
 };
 
 }  // namespace consensus

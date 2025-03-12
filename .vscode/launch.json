@@ -9,6 +9,16 @@
             "cwd": "${workspaceFolder}/build/debug",
             "preLaunchTask": "build_dbg",
             "stopOnEntry": false
+        },
+        {
+            "name": "DebugTserver",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/release/bin/kudu-tserver",
+            "cwd": "${workspaceFolder}/build/release",
+            "preLaunchTask": "build_dbg",
+            "stopOnEntry": false,
+            "args": ["--tserver_master_addrs=localhost:7777","--rpc_bind_addresses=0.0.0.0:8764", "--fs_wal_dir=/root/kudu_fs"]
         }
     ]
 }
