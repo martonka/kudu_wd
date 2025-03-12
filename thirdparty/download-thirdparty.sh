@@ -332,16 +332,26 @@ fetch_and_patch \
  $PYTHON_SOURCE \
  $PYTHON_PATCHLEVEL
 
-LLVM_PATCHLEVEL=5
+LLVM_PATCHLEVEL=8
 fetch_and_patch \
  llvm-${LLVM_VERSION}-iwyu-${IWYU_VERSION}.src.tar.gz \
  $LLVM_SOURCE \
  $LLVM_PATCHLEVEL \
  "patch -p1 < $TP_DIR/patches/llvm-add-iwyu.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-iwyu-718e69875.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-iwyu-0de60d8a2.patch" \
  "patch -d projects -p1 < $TP_DIR/patches/llvm-remove-cyclades-inclusion-in-sanitizer.patch" \
  "patch -p2 < $TP_DIR/patches/llvm-fix-missing-include.patch" \
  "patch -d projects -p1 < $TP_DIR/patches/llvm-Sanitizer-built-against-glibc-2_34-doesnt-work.patch" \
- "patch -d tools -p1 < $TP_DIR/patches/llvm-ignore-flto-values.patch"
+ "patch -d tools -p1 < $TP_DIR/patches/llvm-ignore-flto-values.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-00.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-01.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-02.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-include-llvm-support-signals.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-is-convertible-00.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-is-convertible-01.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-00.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-01.patch"
 
 LZ4_PATCHLEVEL=0
 fetch_and_patch \
@@ -472,21 +482,22 @@ fetch_and_patch \
 
 JWT_CPP_PATCHLEVEL=0
 fetch_and_patch \
-  $JWT_CPP_NAME.tar.gz \
-  $JWT_CPP_SOURCE \
-  $JWT_CPP_PATCHLEVEL
+ $JWT_CPP_NAME.tar.gz \
+ $JWT_CPP_SOURCE \
+ $JWT_CPP_PATCHLEVEL
 
 RANGER_KMS_PATCHLEVEL=0
 fetch_and_patch \
-  $RANGER_KMS_NAME.tar.gz \
-  $RANGER_KMS_SOURCE \
-  $RANGER_KMS_PATCHLEVEL
+ $RANGER_KMS_NAME.tar.gz \
+ $RANGER_KMS_SOURCE \
+ $RANGER_KMS_PATCHLEVEL
 
-ROCKSDB_PATCHLEVEL=0
+ROCKSDB_PATCHLEVEL=1
 fetch_and_patch \
-  $ROCKSDB_NAME.tar.gz \
-  $ROCKSDB_SOURCE \
-  $ROCKSDB_PATCHLEVEL
+ $ROCKSDB_NAME.tar.gz \
+ $ROCKSDB_SOURCE \
+ $ROCKSDB_PATCHLEVEL \
+ "patch -p1 < $TP_DIR/patches/rocksdb-gcc13.patch"
 
 echo "---------------"
 echo "Thirdparty dependencies downloaded successfully"

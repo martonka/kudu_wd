@@ -18,6 +18,7 @@
 #include "kudu/util/maintenance_manager.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -47,6 +48,7 @@
 #include "kudu/util/random.h"
 #include "kudu/util/random_util.h"
 #include "kudu/util/scoped_cleanup.h"
+#include "kudu/util/status.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
 #include "kudu/util/thread.h"
@@ -150,9 +152,11 @@ class TestMaintenanceOp : public MaintenanceOp {
     if (register_self_) {
       scoped_refptr<kudu::Thread> thread;
       // Re-register itself after 50ms.
-      kudu::Thread::Create("maintenance-test", "self-register", [this]() {
-        this->set_remaining_runs(1);
-      }, &thread);
+      CHECK_OK(kudu::Thread::Create("maintenance-test",
+                                    "self-register",
+                                    [this]() {
+                                      this->set_remaining_runs(1);
+                                    }, &thread));
     }
   }
 
@@ -614,32 +618,79 @@ TEST_F(MaintenanceManagerTest, TestPrioritizeLogRetentionUnderMemoryPressure) {
 }
 
 // Test retrieving a list of an op's running instances
-TEST_F(MaintenanceManagerTest, TestRunningInstances) {
+TEST_F(MaintenanceManagerTest, RunningInstances) {
   TestMaintenanceOp op("op", MaintenanceOp::HIGH_IO_USAGE);
   op.set_perf_improvement(10);
   op.set_remaining_runs(2);
   op.set_sleep_time(MonoDelta::FromSeconds(1));
+
   manager_->RegisterOp(&op);
+  auto unregistrant = MakeScopedCleanup([&] {
+    manager_->UnregisterOp(&op);
+  });
 
   // Check that running instances are added to the maintenance manager's collection,
-  // and fields are getting filled.
-  ASSERT_EVENTUALLY([&]() {
-      MaintenanceManagerStatusPB status_pb;
-      manager_->GetMaintenanceManagerStatusDump(&status_pb);
-      ASSERT_EQ(status_pb.running_operations_size(), 2);
-      const MaintenanceManagerStatusPB_OpInstancePB& instance1 = status_pb.running_operations(0);
-      const MaintenanceManagerStatusPB_OpInstancePB& instance2 = status_pb.running_operations(1);
-      ASSERT_EQ(instance1.name(), op.name());
-      ASSERT_NE(instance1.thread_id(), instance2.thread_id());
-    });
-
-  // Wait for instances to complete.
-  manager_->UnregisterOp(&op);
-
-  // Check that running instances are removed from collection after completion.
+  // and fields are populated.
   MaintenanceManagerStatusPB status_pb;
-  manager_->GetMaintenanceManagerStatusDump(&status_pb);
-  ASSERT_EQ(status_pb.running_operations_size(), 0);
+  std::array<const MaintenanceManagerStatusPB_OpInstancePB*, 2> instances{ nullptr, nullptr };
+  ASSERT_EVENTUALLY([&]() {
+    // Clear 'status_pb' if ASSERT_EVENTUALLY() retries:
+    // MaintenanceManager::GetMaintenanceManagerStatusDump() doesn't clear
+    // its output parameter, adding up more data instead.
+    status_pb.Clear();
+    manager_->GetMaintenanceManagerStatusDump(&status_pb);
+    const auto num_running = status_pb.running_operations_size();
+    ASSERT_GE(num_running, 0);
+    const auto num_completed = status_pb.completed_operations_size();
+    ASSERT_GE(num_completed, 0);
+
+    // Due to scheduler anomalies and other uncontrollable factors, the main
+    // thread might be put off CPU for some time, so one or even two operations
+    // may be completed already.
+    ASSERT_EQ(2, num_running + num_completed);
+    if (num_running == 2) {
+      instances[0] = &status_pb.running_operations(0);
+      instances[1] = &status_pb.running_operations(1);
+    } else if (num_completed == 2) {
+      instances[0] = &status_pb.completed_operations(0);
+      instances[1] = &status_pb.completed_operations(1);
+    } else {
+      instances[0] = &status_pb.running_operations(0);
+      instances[1] = &status_pb.completed_operations(0);
+    }
+  });
+  ASSERT_NE(nullptr, instances[0]);
+  ASSERT_NE(nullptr, instances[1]);
+  ASSERT_EQ(op.name(), instances[0]->name());
+  ASSERT_EQ(op.name(), instances[1]->name());
+  ASSERT_NE(instances[0]->thread_id(), instances[1]->thread_id());
+
+  // When unregistering operations, the maintenance manager waits for them
+  // to complete.
+  unregistrant.run();
+
+  // Check that running instances aren't present in the collection
+  // when the ops are no longer running.
+  {
+    MaintenanceManagerStatusPB status_pb;
+    manager_->GetMaintenanceManagerStatusDump(&status_pb);
+    ASSERT_EQ(0, status_pb.running_operations_size());
+  }
+
+  // The information on the completed tasks appears after waiting for each
+  // of them to wrap up and waking up the scheduler. So, there might be a race
+  // between this test thread which calls GetMaintenanceManagerStatusDump()
+  // and the MM worker threads that update the container with the information
+  // on the completed tasks. The ASSERT_EVENTUALLY() macro below helps
+  // to avoid flakiness in case of scheduler anomalies or when running this
+  // test scenario on a busy machine.
+  ASSERT_EVENTUALLY([&]() {
+    MaintenanceManagerStatusPB status_pb;
+    manager_->GetMaintenanceManagerStatusDump(&status_pb);
+    ASSERT_EQ(2, status_pb.completed_operations_size());
+    ASSERT_NE(status_pb.completed_operations(0).thread_id(),
+              status_pb.completed_operations(1).thread_id());
+  });
 }
 
 // Test adding operations and make sure that the history of recently completed

@@ -220,7 +220,7 @@ TAG_FLAG(enable_multi_tenancy, experimental);
 
 bool ValidateMultiTenancySettings() {
   if (FLAGS_enable_multi_tenancy && !FLAGS_encrypt_data_at_rest) {
-    LOG(ERROR) << strings::Substitute(
+    LOG(ERROR) << Substitute(
         "The --enable_multi_tenancy can be set 'true' only when --encrypt_data_at_rest "
         "is set 'true'. Current settings are $0 and $1 correspondingly",
         FLAGS_enable_multi_tenancy, FLAGS_encrypt_data_at_rest);
@@ -392,10 +392,9 @@ ssize_t pwritevsim(int fd, const struct iovec* iovec, int count, off_t offset) {
 #endif
 
 void DoClose(int fd) {
-  int err;
-  RETRY_ON_EINTR(err, close(fd));
-  if (PREDICT_FALSE(err != 0)) {
-    PLOG(WARNING) << "Failed to close fd " << fd;
+  if (PREDICT_FALSE(close(fd) != 0)) {
+    const int err = errno;
+    LOG(WARNING) << Substitute("error closing fd $0: $1", fd, ErrnoToString(err));
   }
 }
 
@@ -988,10 +987,10 @@ class PosixSequentialFile: public SequentialFile {
       encryption_header_(eh) {}
 
   ~PosixSequentialFile() {
-    int err;
-    RETRY_ON_EINTR(err, fclose(file_));
-    if (PREDICT_FALSE(err != 0)) {
-      PLOG(WARNING) << "Failed to close " << filename_;
+    if (PREDICT_FALSE(fclose(file_) != 0)) {
+      const int err = errno;
+      LOG(WARNING) << Substitute("error closing '$0': $1",
+                                 filename_, ErrnoToString(err));
     }
   }
 
@@ -1180,11 +1179,12 @@ class PosixWritableFile : public WritableFile {
       }
     }
 
-    int ret;
-    RETRY_ON_EINTR(ret, close(fd_));
-    if (ret < 0) {
+    if (PREDICT_FALSE(close(fd_) != 0)) {
+      const int err = errno;
+      auto err_status = IOError(filename_, err);
+      LOG(WARNING) << Substitute("error closing file: $0", err_status.ToString());
       if (s.ok()) {
-        s = IOError(filename_, errno);
+        s = std::move(err_status);
       }
     }
 
@@ -1410,11 +1410,12 @@ class PosixRWFile : public RWFile {
       }
     }
 
-    int ret;
-    RETRY_ON_EINTR(ret, close(fd_));
-    if (ret < 0) {
+    if (PREDICT_FALSE(close(fd_) != 0)) {
+      const int err = errno;
+      auto err_status = IOError(filename_, err);
+      LOG(WARNING) << Substitute("error closing file: $0", err_status.ToString());
       if (s.ok()) {
-        s = IOError(filename_, errno);
+        s = std::move(err_status);
       }
     }
 
@@ -1673,15 +1674,21 @@ class PosixEnv : public Env {
                    const string& fname,
                    unique_ptr<RWFile>* result) override {
     TRACE_EVENT1("io", "PosixEnv::NewRWFile", "path", fname);
-    int fd = 0;
-    bool encrypt = opts.is_sensitive && IsEncryptionEnabled();
+    const bool encrypt = opts.is_sensitive && IsEncryptionEnabled();
     uint64_t size = 0;
     if (opts.mode == MUST_EXIST) {
       RETURN_NOT_OK(GetFileSize(fname, &size));
     } else if (encrypt) {
-      GetFileSize(fname, &size);
+      const auto s = GetFileSize(fname, &size);
+      if (PREDICT_FALSE(!s.ok() && !s.IsNotFound())) {
+        // The only expected non-OK status is Status::NotFound() if no file
+        // exists at the specified path: the use case of creating a new
+        // encrypted file.
+        return s;
+      }
     }
 
+    int fd = 0;
     RETURN_NOT_OK(DoOpen(fname, opts.mode, &fd));
     EncryptionHeader eh;
     if (encrypt) {
@@ -1692,6 +1699,7 @@ class PosixEnv : public Env {
       if (size >= kEncryptionHeaderSize) {
         RETURN_NOT_OK(ReadEncryptionHeader(fd, fname, *encryption_key_, &eh));
       } else {
+        DCHECK_EQ(0, size); // overwriting non-encrypted file with encrypted one?
         RETURN_NOT_OK(GenerateHeader(&eh));
         RETURN_NOT_OK(WriteEncryptionHeader(fd, fname, *encryption_key_, eh));
       }
@@ -2363,10 +2371,9 @@ class PosixEnv : public Env {
   struct FtsCloser {
     void operator()(FTS *fts) const {
       if (fts) {
-        int err;
-        RETRY_ON_EINTR(err, fts_close(fts));
-        if (PREDICT_FALSE(err != 0)) {
-          PLOG(WARNING) << "Failed to close fts";
+        if (PREDICT_FALSE(fts_close(fts) != 0)) {
+          const int err = errno;
+          LOG(WARNING) << Substitute("failed to close FTS handle: $0", ErrnoToString(err));
         }
       }
     }
@@ -2465,23 +2472,29 @@ class PosixEnv : public Env {
   }
 
   Status EchoToFile(const char* file_path, const char* data_ptr, int data_size) override {
+    constexpr const char* const kErrFmt = "error closing file '$0': $1";
     int f;
     RETRY_ON_EINTR(f, open(file_path, O_WRONLY));
-    if (f == -1)
-      return IOError(file_path, errno);
+    if (f == -1) {
+      const int err = errno;
+      return IOError(file_path, err);
+    }
     ssize_t write_ret;
     RETRY_ON_EINTR(write_ret, write(f, data_ptr, data_size));
     if (write_ret == -1) {
-      // Try to close it anyway, but return the error during write().
-      int saved_errno = errno;
-      int dont_care;
-      RETRY_ON_EINTR(dont_care, close(f));
+      // Try to close it anyway, but return the error happened during write().
+      const int saved_errno = errno;
+      if (PREDICT_FALSE(close(f) != 0)) {
+        int err = errno;
+        LOG(WARNING) << Substitute(kErrFmt, file_path, ErrnoToString(err));
+      }
       return IOError(file_path, saved_errno);
     }
-    int close_ret;
-    RETRY_ON_EINTR(close_ret, close(f));
-    if (close_ret == -1)
-      return IOError(file_path, errno);
+    if (PREDICT_FALSE(close(f) != 0)) {
+      int err = errno;
+      LOG(WARNING) << Substitute(kErrFmt, file_path, ErrnoToString(err));
+      return IOError(file_path, err);
+    }
     return Status::OK();
   }
 

@@ -670,6 +670,11 @@ sq_callback_result_t Webserver::RunPathHandler(
     BuildArgumentMap(request_info->query_string, &req.parsed_args);
   }
   req.path_params = path_params;
+  if (request_info->remote_user != nullptr) {
+    req.authn_principal = request_info->remote_user;
+  } else {
+    req.authn_principal = "";
+  }
   for (int i = 0; i < request_info->num_headers; i++) {
     const auto& h = request_info->http_headers[i];
     string key = h.name;
@@ -786,7 +791,7 @@ void Webserver::SendResponse(struct sq_connection* connection,
       }
 
       ostringstream oss;
-      Status s = zlib::CompressLevel(uncompressed, 1, &oss);
+      const auto s = zlib::Compress(uncompressed, &oss);
       if (PREDICT_TRUE(s.ok())) {
         resp->output.str(oss.str());
         is_compressed = true;

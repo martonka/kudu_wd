@@ -35,6 +35,7 @@
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/subprocess/subprocess.pb.h" // IWYU pragma: keep
 #include "kudu/tools/tool.pb.h"  // IWYU pragma: keep
+#include "kudu/util/errno.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/pb_util.h"
 #include "kudu/util/status.h"
@@ -60,9 +61,14 @@ SubprocessProtocol::SubprocessProtocol(SerializationMode serialization_mode,
 
 SubprocessProtocol::~SubprocessProtocol() {
   if (close_mode_ == CloseMode::CLOSE_ON_DESTROY) {
-    int ret;
-    RETRY_ON_EINTR(ret, close(read_fd_));
-    RETRY_ON_EINTR(ret, close(write_fd_));
+    if (PREDICT_FALSE(close(read_fd_) != 0)) {
+      const int err = errno;
+      LOG(WARNING) << Substitute("error closing read fd: $0", ErrnoToString(err));
+    }
+    if (PREDICT_FALSE(close(write_fd_) != 0)) {
+      const int err = errno;
+      LOG(WARNING) << Substitute("error closing write fd: $0", ErrnoToString(err));
+    }
   }
 }
 
@@ -92,7 +98,7 @@ Status SubprocessProtocol::ReceiveMessage(M* message) {
       if (!google_status.ok()) {
         return Status::InvalidArgument(
             Substitute("unable to parse JSON: $0", buf.ToString()),
-            google_status.error_message().ToString());
+            google_status.message().ToString());
       }
       break;
     }
@@ -154,7 +160,7 @@ Status SubprocessProtocol::SendMessage(const M& message) {
       if (!google_status.ok()) {
         return Status::InvalidArgument(Substitute(
             "unable to serialize JSON: $0", pb_util::SecureDebugString(message)),
-                                       google_status.error_message().ToString());
+                                       google_status.message().ToString());
       }
 
       buf.append(serialized);

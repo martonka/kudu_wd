@@ -872,7 +872,9 @@ Status Log::AsyncAppendReplicates(vector<ReplicateRefPtr> replicates,
       CreateBatchFromPB(REPLICATE, batch_pb, std::move(callback));
 
   for (LogEntryPB& entry : *batch_pb.mutable_entry()) {
-    entry.release_replicate();
+    // Release the ownership of ReplicateMsg in every entry since it's managed
+    // at the upper level where the 'replicates' parameter is passed from.
+    entry.unsafe_arena_release_replicate();
   }
 
   return AsyncAppend(std::move(batch));
@@ -1019,7 +1021,7 @@ Status Log::Append(LogEntryPB* entry) {
   LogEntryBatchPB entry_batch_pb;
   entry_batch_pb.mutable_entry()->UnsafeArenaAddAllocated(entry);
   LogEntryBatch entry_batch(entry->type(), entry_batch_pb, &DoNothingStatusCB);
-  entry_batch_pb.mutable_entry()->ExtractSubrange(0, 1, nullptr);
+  entry_batch_pb.mutable_entry()->UnsafeArenaExtractSubrange(0, 1, nullptr);
   Status s = WriteBatch(&entry_batch);
   if (s.ok()) {
     s = Sync();

@@ -210,6 +210,8 @@ TEST_F(RaftConsensusElectionITest, TestNewLeaderCantResolvePeers) {
   const auto& tablet_id = tablet_ids[0];
   const auto bad_ts_uuid = ts_iter->second->uuid();
   const auto* second_ts = (++ts_iter)->second;
+  ASSERT_NE(tablet_servers_.end(), ts_iter);
+  const auto* third_ts = (++ts_iter)->second;
 
   // Start failing DNS resolver queries for the selected tablet server during
   // leader election.
@@ -273,8 +275,9 @@ TEST_F(RaftConsensusElectionITest, TestNewLeaderCantResolvePeers) {
   // Cause an election again to trigger a new report to the master. This time
   // the master should place the replica since it has a new tserver available.
   ASSERT_OK(LeaderStepDown(
-      second_ts, tablet_id, kTimeout, /*error=*/nullptr, second_ts->uuid()));
-  ASSERT_OK(WaitUntilLeader(second_ts, tablet_id, kTimeout));
+      second_ts, tablet_id, kTimeout, /*error=*/nullptr, third_ts->uuid()));
+  ASSERT_OK(WaitUntilLeader(third_ts, tablet_id, kTimeout));
+  NO_FATALS(cluster_->AssertNoCrashes());
 
   STLDeleteValues(&tablet_servers_);
   ASSERT_OK(itest::CreateTabletServerMap(cluster_->master_proxy(),

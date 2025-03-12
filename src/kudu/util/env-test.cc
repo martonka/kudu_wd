@@ -56,11 +56,13 @@
 
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/map-util.h"
+#include "kudu/gutil/port.h"
 #include "kudu/gutil/strings/human_readable.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/strings/util.h"
 #include "kudu/util/array_view.h" // IWYU pragma: keep
 #include "kudu/util/env_util.h"
+#include "kudu/util/errno.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/path_util.h"
@@ -132,7 +134,10 @@ class TestEnv : public KuduTest {
       }
     }
 
-    RETRY_ON_EINTR(err, close(fd));
+    if (PREDICT_FALSE(close(fd) != 0)) {
+      const int err = errno;
+      LOG(WARNING) << Substitute("error closing fd $0: $1", fd, ErrnoToString(err));
+    }
 #endif
 
     checked = true;
@@ -884,8 +889,8 @@ TEST_F(TestEnv, TestGetFileModifiedTime) {
   // HFS has 1 second mtime granularity.
   AssertEventually([&] {
     int64_t after_time;
-    writer->Append(" ");
-    writer->Sync();
+    ASSERT_OK(writer->Append(" "));
+    ASSERT_OK(writer->Sync());
     ASSERT_OK(env_->GetFileModifiedTime(writer->filename(), &after_time));
     ASSERT_LT(initial_time, after_time);
   }, MonoDelta::FromSeconds(5));
