@@ -111,7 +111,8 @@ MultiRaftHeartbeatBatcher::MultiRaftHeartbeatBatcher(const kudu::HostPort& hostp
                                                      std::shared_ptr<kudu::rpc::Messenger> messenger)
     : messenger_(messenger),
       consensus_proxy_(std::make_unique<ConsensusServiceProxy>(messenger, hostport, dns_resolver)),
-      current_batch_(std::make_shared<MultiRaftConsensusData>()) {}
+      current_batch_(std::make_shared<MultiRaftConsensusData>()),
+      buffer_start_idx(0) {}
 
 void MultiRaftHeartbeatBatcher::Start() {
   std::weak_ptr<MultiRaftHeartbeatBatcher> const weak_peer = shared_from_this();
@@ -128,11 +129,12 @@ void MultiRaftHeartbeatBatcher::Start() {
 
 MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 
-void MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
+uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
                                                   ConsensusResponsePB* response,
                                                   HeartbeatResponseCallback callback) {
   std::string reqs = request->DebugString();
   std::shared_ptr<MultiRaftConsensusData> data = nullptr;
+  uint64_t res; 
   VLOG(1) << "Adding request to batch ";
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -150,37 +152,43 @@ void MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
       DCHECK(request->dest_uuid() == current_batch_->batch_req.dest_uuid());
     }
 
+    res = buffer_start_idx.load(std::memory_order_relaxed) + current_batch_->response_callback_data.size();
+
     current_batch_->response_callback_data.push_back({response, std::move(callback)});
+
     // Add a ConsensusRequestPB to the batch
     *current_batch_->batch_req.add_consensus_requests() = ToBatchRequest(*request);
 
     if (FLAGS_multi_raft_batch_size > 0 &&
         current_batch_->response_callback_data.size() >= FLAGS_multi_raft_batch_size) {
-      data = PrepareNextBatchRequest();
+      data = PrepareNextBatchRequestUnlocked();
+
     }
   }
   if (data) {
     SendBatchRequest(data);
   }
+  return res;
 }
 
 void MultiRaftHeartbeatBatcher::PrepareAndSendBatchRequest() {
   std::shared_ptr<MultiRaftConsensusData> data;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    data = PrepareNextBatchRequest();
+    data = PrepareNextBatchRequestUnlocked();
   }
   SendBatchRequest(data);
 }
 
 std::shared_ptr<MultiRaftHeartbeatBatcher::MultiRaftConsensusData>
-MultiRaftHeartbeatBatcher::PrepareNextBatchRequest() {
-  if (current_batch_->batch_req.consensus_requests_size() == 0) {
+MultiRaftHeartbeatBatcher::PrepareNextBatchRequestUnlocked() {
+  if (current_batch_->response_callback_data.size() == 0) {
     return nullptr;
   }
   batch_sender_->Snooze();
   auto data = std::move(current_batch_);
   current_batch_ = std::make_shared<MultiRaftConsensusData>();
+  buffer_start_idx.fetch_add(current_batch_->response_callback_data.size(), std::memory_order_relaxed); 
   return data;
 }
 
