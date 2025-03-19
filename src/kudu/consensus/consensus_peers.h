@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -225,7 +226,18 @@ class Peer :
   // concurrently.
   simple_spinlock peer_lock_;
 
-  std::atomic<bool> request_pending_;
+  enum class RequestStatus {
+    NO_ACTIVE,
+    PENDING_NON_BUFFERED,
+    PENDING_BUFFERED_PREPARE,
+    PENDING_BUFFERED_POSSIBLY_IN_BUFFERED,
+    PENDING_BUFFERED_REQUEST_TO_FLUSH,
+    PENDING_BUFFERED_FLUSHED
+  };
+  std::atomic<RequestStatus> request_pending_;
+  std::uint64_t pending_idx_;
+  bool CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l);
+
   std::atomic<bool> closed_;
   bool has_sent_first_request_;
 };

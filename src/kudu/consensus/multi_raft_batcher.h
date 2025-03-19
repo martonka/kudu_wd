@@ -64,12 +64,22 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   // If the batch executes sucessfully then the response is populated and the callback is executed.
   // If the batch rpc call fails the response will NOT be populated and the callback will be
   // executed with an error status.
-  void AddRequestToBatch(ConsensusRequestPB* request,
+  // Returns an id, that can be used to remove the message if it is still buffered.
+  // This is needed to writes does not need to wait for the no-op hearthbeat.
+  uint64_t AddRequestToBatch(ConsensusRequestPB* request,
                          ConsensusResponsePB* response,
                          HeartbeatResponseCallback callback);
 
   void IncrementNoOpPackageCounter();
 
+  // flushes the buffer if the given message is still in it  
+  void FlushMessage(uint64 msg_idx) {
+    // No need locking for the check. If a flush is in progress, it will just
+    // lock and early return.
+    if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed) ) {
+      PrepareAndSendBatchRequest();
+    }
+  }
  private:
   // Tracks a single peers ConsensusResponsePB as well as its ProcessResponse callback.
   struct ResponseCallbackData {
@@ -84,7 +94,7 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   void PrepareAndSendBatchRequest();
 
   // This method will return a nullptr if the current batch is empty.
-  std::shared_ptr<MultiRaftConsensusData> PrepareNextBatchRequest() /* fixme(zchovan) REQUIRES(mutex_)*/;
+  std::shared_ptr<MultiRaftConsensusData> PrepareNextBatchRequestUnlocked() /* fixme(zchovan) REQUIRES(mutex_)*/;
 
   // If data is null then we will not send a batch request.
   void SendBatchRequest(std::shared_ptr<MultiRaftConsensusData> data);
@@ -101,6 +111,7 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   std::shared_ptr<MultiRaftConsensusData> current_batch_ GUARDED_BY(mutex_);
   
+  std::atomic<uint64_t> buffer_start_idx;
 
 };
 
