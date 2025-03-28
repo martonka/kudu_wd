@@ -191,6 +191,8 @@ DECLARE_uint32(dns_resolver_cache_capacity_mb);
 DECLARE_uint32(txn_keepalive_interval_ms);
 DECLARE_uint32(txn_staleness_tracker_interval_ms);
 DECLARE_uint32(txn_manager_status_table_num_replicas);
+DECLARE_int32(multi_raft_batch_size);
+DECLARE_bool(enable_multi_raft_heartbeat_batcher);
 
 DEFINE_int32(test_scan_num_rows, 1000, "Number of rows to insert and scan");
 
@@ -1880,6 +1882,8 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
   // advancing safe time and unblocking scanners.
   FLAGS_raft_heartbeat_interval_ms = 50;
   FLAGS_leader_failure_exp_backoff_max_delta_ms = 1000;
+  FLAGS_multi_raft_batch_size = 1;
+  FLAGS_enable_multi_raft_heartbeat_batcher = 0;
 
   const int kNumReplicas = 3;
   ASSERT_OK(CreateTable(kScanTable, kNumReplicas, {}, {}, &table));
