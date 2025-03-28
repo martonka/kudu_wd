@@ -5,10 +5,21 @@
             "name": "DebugSimpleExecutable",
             "type": "lldb",
             "request": "launch",
-            "program": "${workspaceFolder}/build/debug/bin/mz-itest",
+            "program": "${workspaceFolder}/build/debug/bin/client-test",
             "cwd": "${workspaceFolder}/build/debug",
             "preLaunchTask": "build_dbg",
-            "stopOnEntry": false
+            "stopOnEntry": false,
+            "args": ["--gtest_filter=*TestScanFaultTolerance*"]
+        },
+        {
+            "name": "DebugSimpleExecutable2",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/debug/bin/client-test",
+            "cwd": "${workspaceFolder}/build/debug",
+            "preLaunchTask": "build_dbg",
+            "stopOnEntry": false,
+            "args": ["--gtest_filter=*TestScanFaultTolerance*", "--enable_multi_raft_heartbeat_batcher=0", "--unlock_experimental_flags"]
         },
         {
             "name": "DebugTserver",

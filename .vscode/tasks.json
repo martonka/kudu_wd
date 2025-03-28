@@ -10,7 +10,7 @@
                 "isDefault": true
             },
             "options": {
-                "cwd": "${workspaceFolder}/build/release"
+                "cwd": "${workspaceFolder}/build/debug"
             }
         }
     ]

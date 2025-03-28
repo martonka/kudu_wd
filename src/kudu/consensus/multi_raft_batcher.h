@@ -67,7 +67,6 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   // Returns an id, that can be used to remove the message if it is still buffered.
   // This is needed to writes does not need to wait for the no-op hearthbeat.
   uint64_t AddRequestToBatch(ConsensusRequestPB* request,
-                         ConsensusResponsePB* response,
                          HeartbeatResponseCallback callback);
 
   void IncrementNoOpPackageCounter();
@@ -83,7 +82,6 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
  private:
   // Tracks a single peers ConsensusResponsePB as well as its ProcessResponse callback.
   struct ResponseCallbackData {
-    ConsensusResponsePB* resp;
     HeartbeatResponseCallback callback;
   };
 

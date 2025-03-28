@@ -58,6 +58,7 @@ DEFINE_int32(multi_raft_heartbeat_interval_ms,
              "The heartbeat interval for batch Raft replication.");
 TAG_FLAG(multi_raft_heartbeat_interval_ms, experimental);
 TAG_FLAG(multi_raft_heartbeat_interval_ms, runtime);
+DECLARE_int32(raft_heartbeat_interval_ms);
 
 DEFINE_bool(enable_multi_raft_heartbeat_batcher,
             true,
@@ -103,7 +104,7 @@ struct MultiRaftHeartbeatBatcher::MultiRaftConsensusData  {
   MultiRaftConsensusRequestPB batch_req;
   MultiRaftConsensusResponsePB batch_res;
   rpc::RpcController controller;
-  std::vector<ResponseCallbackData> response_callback_data;
+  std::vector<HeartbeatResponseCallback> response_callback_data;
 };
 
 MultiRaftHeartbeatBatcher::MultiRaftHeartbeatBatcher(const kudu::HostPort& hostport,
@@ -116,6 +117,12 @@ MultiRaftHeartbeatBatcher::MultiRaftHeartbeatBatcher(const kudu::HostPort& hostp
 
 void MultiRaftHeartbeatBatcher::Start() {
   std::weak_ptr<MultiRaftHeartbeatBatcher> const weak_peer = shared_from_this();
+  const auto flush_interval = std::min(FLAGS_raft_heartbeat_interval_ms / 2
+                                       , FLAGS_multi_raft_heartbeat_interval_ms );
+  if (flush_interval < FLAGS_multi_raft_heartbeat_interval_ms) {
+    LOG(WARNING) << "multi_raft_heartbeat_interval_ms should be at most half of" 
+                 << "heartbeat_interval_ms, forcing its value to: " << flush_interval;
+  }
   batch_sender_ = PeriodicTimer::Create(
       messenger_,
       [weak_peer]() {
@@ -123,14 +130,13 @@ void MultiRaftHeartbeatBatcher::Start() {
           peer->PrepareAndSendBatchRequest();
         }
       },
-      MonoDelta::FromMilliseconds(FLAGS_multi_raft_heartbeat_interval_ms));
+      MonoDelta::FromMilliseconds(flush_interval));
   batch_sender_->Start();
 }
 
 MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 
 uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
-                                                  ConsensusResponsePB* response,
                                                   HeartbeatResponseCallback callback) {
   std::string reqs = request->DebugString();
   std::shared_ptr<MultiRaftConsensusData> data = nullptr;
@@ -154,7 +160,7 @@ uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* reques
 
     res = buffer_start_idx.load(std::memory_order_relaxed) + current_batch_->response_callback_data.size();
 
-    current_batch_->response_callback_data.push_back({response, std::move(callback)});
+    current_batch_->response_callback_data.push_back(std::move(callback));
 
     // Add a ConsensusRequestPB to the batch
     *current_batch_->batch_req.add_consensus_requests() = ToBatchRequest(*request);
@@ -223,19 +229,13 @@ void MultiRaftHeartbeatBatcher::SendBatchRequest(std::shared_ptr<MultiRaftConsen
 void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
     std::shared_ptr<MultiRaftConsensusData> data) {
   auto status = data->controller.status();
-  auto ss = data->batch_res.DebugString();
   if (!status.ok()) {
     LOG(INFO) << "MultiRaftUpdate not ok, status: " << status.ToString() << std::endl;
     return;
   }
   for (int i = 0; i < data->batch_req.consensus_requests_size(); i++) {
-    auto callback_data = data->response_callback_data[i];
-    // todo check local status
-    // mzzzz
-    //callback_data.resp->Swap(data->batch_res.mutable_consensus_responses(i));
-
-    LOG(INFO) << "calling multiraftupdateheartbeatresponse callback and is init:" << callback_data.resp->IsInitialized() << std::endl;
-    callback_data.callback(data->controller, data->batch_res, data->batch_res.consensus_responses(i));
+    data->response_callback_data[i](data->controller, data->batch_res
+                                    , data->batch_res.consensus_responses(i));
   }
 }
 

@@ -314,7 +314,7 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   }
   if (will_batch) {
     response_.mutable_status()->Swap(new ConsensusStatusPB());
-    pending_idx_ = multi_raft_batcher_->AddRequestToBatch(&request_, &response_,
+    pending_idx_ = multi_raft_batcher_->AddRequestToBatch(&request_,
                                          [s_this](const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root,
                                             const BatchedNoOpConsensusResponsePB& resp){ s_this->ProcessResponseFromBatch(controller, root, resp); });
     {
