@@ -412,6 +412,9 @@ void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const 
     if (resp->has_server_quiescing()) {
       response_.set_server_quiescing(resp->server_quiescing());
     }
+    if (resp->has_error()) {
+      *response_.mutable_error() = resp->error();
+    }
   }
   
   ProcessResponse(controller);
