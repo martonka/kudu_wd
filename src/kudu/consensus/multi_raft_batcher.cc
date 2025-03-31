@@ -229,7 +229,7 @@ void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
     std::shared_ptr<MultiRaftConsensusData> data) {
   auto status = data->controller.status();
   for (int i = 0; i < data->batch_req.consensus_requests_size(); i++) {
-    const auto* resp = status.ok() && data->batch_res.consensus_responses_size() > i ?
+    const auto* resp = data->batch_res.consensus_responses_size() > i ?
       &data->batch_res.consensus_responses(i) : nullptr;
     data->response_callback_data[i](data->controller, data->batch_res
                                     , resp);
