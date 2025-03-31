@@ -316,7 +316,7 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
     response_.mutable_status()->Swap(new ConsensusStatusPB());
     pending_idx_ = multi_raft_batcher_->AddRequestToBatch(&request_,
                                          [s_this](const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root,
-                                            const BatchedNoOpConsensusResponsePB& resp){ s_this->ProcessResponseFromBatch(controller, root, resp); });
+                                            const BatchedNoOpConsensusResponsePB* resp){ s_this->ProcessResponseFromBatch(controller, root, resp); });
     {
       std::unique_lock l2(peer_lock_);
       if (request_pending_ == RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH) {
@@ -393,7 +393,7 @@ void Peer::StartElection() {
 }
 
 
-void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB& resp) {
+void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB* resp) {
 
   response_.Clear();
   if (root.has_error()) {
@@ -402,14 +402,16 @@ void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const 
   if (root.has_responder_uuid()) {
     response_.set_responder_uuid(root.responder_uuid());
   }
-  if (resp.has_responder_term()) {
-    response_.set_responder_term(resp.responder_term());
-  }
-  if (resp.has_status()) {
-    *response_.mutable_status() = resp.status();
-  }
-  if (resp.has_server_quiescing()) {
-    response_.set_server_quiescing(resp.server_quiescing());
+  if (resp != nullptr) {
+    if (resp->has_responder_term()) {
+      response_.set_responder_term(resp->responder_term());
+    }
+    if (resp->has_status()) {
+      *response_.mutable_status() = resp->status();
+    }
+    if (resp->has_server_quiescing()) {
+      response_.set_server_quiescing(resp->server_quiescing());
+    }
   }
   
   ProcessResponse(controller);

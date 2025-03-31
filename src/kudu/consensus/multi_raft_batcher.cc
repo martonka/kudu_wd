@@ -138,7 +138,6 @@ MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 
 uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
                                                   HeartbeatResponseCallback callback) {
-  std::string reqs = request->DebugString();
   std::shared_ptr<MultiRaftConsensusData> data = nullptr;
   uint64_t res; 
   VLOG(1) << "Adding request to batch ";
@@ -229,13 +228,11 @@ void MultiRaftHeartbeatBatcher::SendBatchRequest(std::shared_ptr<MultiRaftConsen
 void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
     std::shared_ptr<MultiRaftConsensusData> data) {
   auto status = data->controller.status();
-  if (!status.ok()) {
-    LOG(INFO) << "MultiRaftUpdate not ok, status: " << status.ToString() << std::endl;
-    return;
-  }
   for (int i = 0; i < data->batch_req.consensus_requests_size(); i++) {
+    const auto* resp = status.ok() && data->batch_res.consensus_responses_size() > i ?
+      &data->batch_res.consensus_responses(i) : nullptr;
     data->response_callback_data[i](data->controller, data->batch_res
-                                    , data->batch_res.consensus_responses(i));
+                                    , resp);
   }
 }
 

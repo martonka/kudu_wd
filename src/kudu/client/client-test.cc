@@ -1883,7 +1883,6 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
   FLAGS_raft_heartbeat_interval_ms = 50;
   FLAGS_leader_failure_exp_backoff_max_delta_ms = 1000;
   FLAGS_multi_raft_batch_size = 1;
-  FLAGS_enable_multi_raft_heartbeat_batcher = 0;
 
   const int kNumReplicas = 3;
   ASSERT_OK(CreateTable(kScanTable, kNumReplicas, {}, {}, &table));
