@@ -38,7 +38,7 @@ class RaftPeerPB;
 
 typedef std::unique_ptr<ConsensusServiceProxy> ConsensusServiceProxyPtr;
 
-using HeartbeatResponseCallback = std::function<void(const rpc::RpcController&, const MultiRaftConsensusResponsePB&, const BatchedNoOpConsensusResponsePB&)>;
+using HeartbeatResponseCallback = std::function<void(const rpc::RpcController&, const MultiRaftConsensusResponsePB&, const BatchedNoOpConsensusResponsePB*)>;
 
 // - MultiRaftHeartbeatBatcher is responsible for the batching of heartbeats
 //   among peers that are communicating with remote peers at the same tserver

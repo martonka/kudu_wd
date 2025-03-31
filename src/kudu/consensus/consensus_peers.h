@@ -137,7 +137,7 @@ class Peer :
  private:
   void SendNextRequest(bool even_if_queue_empty);
 
-  void ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB& resp);
+  void ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB* resp);
   void ProcessSingleResponse();
   // Signals that a response was received from the peer.
   //
