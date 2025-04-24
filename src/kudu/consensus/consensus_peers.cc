@@ -184,7 +184,15 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
 
   // Only allow one request at a time. No sense waking up the
   // raft thread pool if the task will just abort anyway.
+  // this is a best effort logic (since we do not lock). In case of a unsyncronized
+  // change in status, writes might have to wait for the next hearthbeat time (happens with a very
+  // low chanche)
   if (request_pending_ != RequestStatus::NO_ACTIVE) {
+    if (multi_raft_batcher_ && request_pending_ == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
+      std::unique_lock l(peer_lock_);
+      multi_raft_batcher_->FlushMessage(pending_idx_);
+      request_pending_ == RequestStatus::PENDING_BUFFERED_FLUSHED;
+    }
     return Status::OK();
   }
 

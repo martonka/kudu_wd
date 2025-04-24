@@ -10301,6 +10301,7 @@ TEST_F(ClientTestAutoIncrementingColumn, ConcurrentWrites) {
 
   static constexpr int num_clients = 8;
   static constexpr int num_rows_per_client = 1000;
+  FLAGS_log_inject_latency = true;
 
   // Create a table with a single range partition
   static constexpr int lower_bound = 0;
