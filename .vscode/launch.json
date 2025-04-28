@@ -9,7 +9,7 @@
             "cwd": "${workspaceFolder}/build/debug",
             "preLaunchTask": "build_dbg",
             "stopOnEntry": false,
-            "args": ["--gtest_filter=*TestScanFaultTolerance*", "--gtest_repeat=1", "--gtest_break_on_failure"]
+            "args": ["--gtest_filter=*ConcurrentWrites*", "--gtest_repeat=1", "--gtest_break_on_failure"]
         },
         {
             "name": "DebugSimpleExecutable2",
@@ -19,7 +19,7 @@
             "cwd": "${workspaceFolder}/build/debug",
             "preLaunchTask": "build_dbg",
             "stopOnEntry": false,
-            "args": ["--gtest_filter=*TestScanFaultTolerance*", "--enable_multi_raft_heartbeat_batcher=0", "--unlock_experimental_flags"]
+            "args": ["--gtest_filter=*ConcurrentWrites*", "--enable_multi_raft_heartbeat_batcher=0", "--unlock_experimental_flags"]
         },
         {
             "name": "DebugTserver",

@@ -71,12 +71,24 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   void IncrementNoOpPackageCounter();
 
+  // bool DiscardMessage(uint64 msg_idx) {
+  //   if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed) ) {
+  //     std::lock_guard<std::mutex> lock(mutex_);
+  //     if (msg_idx < buffer_start_idx) {
+  //       return false;
+  //     }  
+  //     DCHECK(msg_idx < buffer_start_idx)
+      
+  //   }
+  // }
+
   // flushes the buffer if the given message is still in it  
   void FlushMessage(uint64 msg_idx) {
     // No need locking for the check. If a flush is in progress, it will just
     // lock and early return.
     if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed) ) {
       PrepareAndSendBatchRequest();
+      
     }
   }
  private:

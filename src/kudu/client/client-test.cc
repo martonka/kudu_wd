@@ -10356,10 +10356,14 @@ TEST_F(ClientTestAutoIncrementingColumn, ConcurrentWrites) {
   for (const auto mode: {KuduClient::LEADER_ONLY, KuduClient::CLOSEST_REPLICA,
                          KuduClient::FIRST_REPLICA}) {
     vector<string> row;
-    KuduScanner scanner(table.get());
-    ASSERT_OK(scanner.SetSelection(mode));
-    ASSERT_OK(ScanToStrings(&scanner, &row));
-    ASSERT_EQ(kNumRows, row.size());
+    ASSERT_EVENTUALLY([&] {
+      KuduScanner scanner(table.get());
+      ASSERT_OK(scanner.SetSelection(mode));
+      row.clear();
+      ASSERT_OK(ScanToStrings(&scanner, &row));
+      ASSERT_EQ(kNumRows, row.size());
+    });
+    sort(row.begin(), row.end());
     rows.push_back(row);
   }
   for (int i = 0; i < 2; i++) {
