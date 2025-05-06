@@ -111,7 +111,7 @@ void Peer::NewRemotePeer(RaftPeerPB peer_pb,
                          string tablet_id,
                          string leader_uuid,
                          PeerMessageQueue* queue,
-                         std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher, 
+                         std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
                          ThreadPoolToken* raft_pool_token,
                          PeerProxyFactory* peer_proxy_factory,
                          shared_ptr<Peer>* peer) {
@@ -185,23 +185,13 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
   // Only allow one request at a time. No sense waking up the
   // raft thread pool if the task will just abort anyway.
   // this is a best effort logic (since we do not lock). In case of a unsyncronized
-  // change in status, writes might have to wait for the next hearthbeat time (happens with a very
-  // low chanche)
-  // if (request_pending_ != RequestStatus::NO_ACTIVE) {
-  //   if (multi_raft_batcher_ && (request_pending_.load(std::memory_order_relaxed) == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED || request_pending_.load(std::memory_order_relaxed) == RequestStatus::PENDING_BUFFERED_PREPARE)) { 
-  //     std::unique_lock l(peer_lock_);
-  //     if (request_pending_ == RequestStatus::PENDING_BUFFERED_PREPARE) {
-  //       request_pending_ = RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH;
-  //     } else {
-  //       multi_raft_batcher_->FlushMessage(pending_idx_);
-  //       request_pending_ == RequestStatus::PENDING_BUFFERED_FLUSHED;
-  //     }
-  //   }
-  //   return Status::OK();
-  // }
+  // change in status, writes might have to wait for the next hearthbeat flush time (happens with a
+  // very low chance
   if (request_pending_ != RequestStatus::NO_ACTIVE) {
-    if (multi_raft_batcher_ && (request_pending_.load(std::memory_order_relaxed) == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED || request_pending_.load(std::memory_order_relaxed) == RequestStatus::PENDING_BUFFERED_PREPARE)) { 
+    auto req_state = request_pending_.load(std::memory_order_relaxed);
+    if (multi_raft_batcher_ && (req_state == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED || req_state == RequestStatus::PENDING_BUFFERED_PREPARE)) { 
       std::unique_lock l(peer_lock_);
+      // TODO: possibly discard the message from the buffer than flushing.
       if (CheckPendingAndFlushBuffered(l)) {
         return Status::OK();
       }
@@ -321,15 +311,17 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
       << SecureShortDebugString(request_);
 
   controller_.Reset();
-  
+
   // We do not want to hold the lock in case of a flush happends in multi raft batcher.
   bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher && 
     request_.ops_size() == 0 && multi_raft_batcher_;
   request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE 
     : RequestStatus::PENDING_NON_BUFFERED;
-   
+
   l.unlock();
 
+  // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
+  // that this object outlives the RPC.
   shared_ptr<Peer> s_this = shared_from_this();
 
   if (request_.ops_size() == 0 && multi_raft_batcher_) {
@@ -347,43 +339,32 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
         l2.unlock();
         multi_raft_batcher_->FlushMessage(pending_idx_);
       } else {
-        request_pending_ = RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED;  
+        request_pending_ = RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED;
       }
-    } 
+    }
   } else {
-    // Todo check if there is an empty hearthbeat queued up
     proxy_->UpdateAsync(request_, &response_, &controller_,
                         [s_this]() {
                           s_this->ProcessSingleResponse();
                         });
 
   }
-  // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
-  // that this object outlives the RPC.
 }
 
 bool Peer::CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l) {
   auto request_status = request_pending_.load(std::memory_order_relaxed);
-  if (request_status == RequestStatus::NO_ACTIVE) {
+  if (request_status == RequestStatus::NO_ACTIVE) { // re-check locked
     return false;
   }
-  if (request_status == RequestStatus::PENDING_NON_BUFFERED || request_status == RequestStatus::PENDING_BUFFERED_FLUSHED) {
-    return true;
-  }
   if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
-    // Theoretically we could undo it if still in the buffer and
-    // return false
+    uint64_t idx = pending_idx_; 
     l.unlock();
-    bool discard_message = false; // multi_raft_batcher_->DiscardMessage(pending_idx_);
     multi_raft_batcher_->FlushMessage(pending_idx_); 
-    if (discard_message) {
-      request_status = RequestStatus::NO_ACTIVE;
-      return false;
-    } else
-      return true;
-
-    // we will return in the function above too, and we don't want to hold the lock while we flush.
-  } else {
+    // TODO
+    // if (CanDiscard(idx)) {
+    //  request_status = RequestStatus::NO_ACTIVE;
+    //  return false; }
+  } else if (request_status == RequestStatus::PENDING_BUFFERED_PREPARE) {
     request_pending_ = RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH;
   }
   return true;
@@ -445,7 +426,7 @@ void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const 
       *response_.mutable_error() = resp->error();
     }
   }
-  
+
   ProcessResponse(controller);
 }
 

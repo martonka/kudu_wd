@@ -1882,7 +1882,6 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
   // advancing safe time and unblocking scanners.
   FLAGS_raft_heartbeat_interval_ms = 50;
   FLAGS_leader_failure_exp_backoff_max_delta_ms = 1000;
-  FLAGS_multi_raft_batch_size = 1;
 
   const int kNumReplicas = 3;
   ASSERT_OK(CreateTable(kScanTable, kNumReplicas, {}, {}, &table));
@@ -10301,7 +10300,6 @@ TEST_F(ClientTestAutoIncrementingColumn, ConcurrentWrites) {
 
   static constexpr int num_clients = 8;
   static constexpr int num_rows_per_client = 1000;
-  FLAGS_log_inject_latency = true;
 
   // Create a table with a single range partition
   static constexpr int lower_bound = 0;
