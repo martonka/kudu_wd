@@ -373,14 +373,15 @@ bool Peer::CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l) {
   if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
     // Theoretically we could undo it if still in the buffer and
     // return false
-    bool discard_message = false; // multi_raft_batcher_->DiscardMessage(pending_idx_); 
+    l.unlock();
+    bool discard_message = false; // multi_raft_batcher_->DiscardMessage(pending_idx_);
+    multi_raft_batcher_->FlushMessage(pending_idx_); 
     if (discard_message) {
       request_status = RequestStatus::NO_ACTIVE;
       return false;
     } else
       return true;
 
-    l.unlock();
     // we will return in the function above too, and we don't want to hold the lock while we flush.
   } else {
     request_pending_ = RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH;
