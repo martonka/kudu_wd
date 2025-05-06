@@ -277,7 +277,7 @@ namespace {
     res.set_safe_timestamp(req.safe_timestamp());
     res.set_last_idx_appended_to_leader(req.last_idx_appended_to_leader());
 
-    return res;  
+    return res;
   }
 }
 namespace tserver {

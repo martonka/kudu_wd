@@ -417,7 +417,7 @@ message ConsensusResponsePB {
 }
 
 // Same as ConsensusRequestPB. But dest_uuid and tablet_id are shared between
-// messages 
+// messages
 message BatchedNoOpConsensusRequestPB {
   required string tablet_id = 1;
   required int64 caller_term = 3;
@@ -435,7 +435,7 @@ message MultiRaftConsensusRequestPB {
   required bytes caller_uuid = 3;
 }
 
-// Same as ConsensusRequestPB. But responder_uuid is shared between messages 
+// Same as ConsensusRequestPB. But responder_uuid is shared between messages
 message BatchedNoOpConsensusResponsePB {
   optional int64 responder_term = 1;
   optional ConsensusStatusPB status = 2;

@@ -31,7 +31,7 @@ class MultiRaftManager;
 class ConsensusServiceProxy;
 class ConsensusRequestPB;
 class ConsensusResponsePB;
-class BatchedNoOpConsensusResponsePB; 
+class BatchedNoOpConsensusResponsePB;
 class MultiRaftConsensusRequestPB;
 class MultiRaftConsensusResponsePB;
 class RaftPeerPB;
@@ -40,15 +40,11 @@ typedef std::unique_ptr<ConsensusServiceProxy> ConsensusServiceProxyPtr;
 
 using HeartbeatResponseCallback = std::function<void(const rpc::RpcController&, const MultiRaftConsensusResponsePB&, const BatchedNoOpConsensusResponsePB*)>;
 
-// - MultiRaftHeartbeatBatcher is responsible for the batching of heartbeats
+// - MultiRaftHeartbeatBatcher is responsible for the batching of NoOp heartbeats
 //   among peers that are communicating with remote peers at the same tserver
-// - It is also responsible for periodically sending out these batched requests
-//   and processing their responses
 // - A heartbeat is added to a batch upon calling AddRequestToBatch and a batch is sent
 //   out every FLAGS_multi_raft_heartbeat_interval_ms ms or once the batch size reaches
 //   FLAGS_multi_raft_batch_size
-// - To improve efficency multiple batches may be processed concurrently
-//   but only a single batch is being built at any given time
 class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHeartbeatBatcher> {
  public:
   MultiRaftHeartbeatBatcher(const kudu::HostPort& hostport,
@@ -57,54 +53,33 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   ~MultiRaftHeartbeatBatcher();
 
-  // Required to start a periodic timer to send out batches.
+  // Start a periodic timer to send out batches.
   void Start();
 
-  // When called adds the request to a batch (request data will be swapped).
-  // If the batch executes sucessfully then the response is populated and the callback is executed.
-  // If the batch rpc call fails the response will NOT be populated and the callback will be
-  // executed with an error status.
-  // Returns an id, that can be used to remove the message if it is still buffered.
-  // This is needed to writes does not need to wait for the no-op hearthbeat.
+  // Returns an id, that can be used to flush the message if it is still buffered.
+  // This is needed so writes does not need to wait for the no-op hearthbeat.
   uint64_t AddRequestToBatch(ConsensusRequestPB* request,
                          HeartbeatResponseCallback callback);
 
   void IncrementNoOpPackageCounter();
 
-  // bool DiscardMessage(uint64 msg_idx) {
-  //   if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed) ) {
-  //     std::lock_guard<std::mutex> lock(mutex_);
-  //     if (msg_idx < buffer_start_idx) {
-  //       return false;
-  //     }  
-  //     DCHECK(msg_idx < buffer_start_idx)
-      
-  //   }
-  // }
-
-  // flushes the buffer if the given message is still in it  
+  // Flushes the buffer if the given message is still in it  
   void FlushMessage(uint64 msg_idx) {
-    // No need locking for the check. If a flush is in progress, it will just
-    // lock and early return.
+    // No need locking for the check. If the message is already flushed, and there
+    // are new messages in the buffer, than an unecessary (but fine) flush will hapen.
     if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed) ) {
       PrepareAndSendBatchRequest();
-      
     }
   }
  private:
-  // Tracks a single peers ConsensusResponsePB as well as its ProcessResponse callback.
-  struct ResponseCallbackData {
-    HeartbeatResponseCallback callback;
-  };
 
-  // Tracks all the metadata for a single batch request, including a list of all
-  // ResponseCallbackData registered by each local peer with this batch in AddRequestToBatch().
+  // Tracks all the requests, responses and callbacks in the batch.
   struct MultiRaftConsensusData;
 
   void PrepareAndSendBatchRequest();
 
   // This method will return a nullptr if the current batch is empty.
-  std::shared_ptr<MultiRaftConsensusData> PrepareNextBatchRequestUnlocked() /* fixme(zchovan) REQUIRES(mutex_)*/;
+  std::shared_ptr<MultiRaftConsensusData> PrepareNextBatchRequestUnlocked();
 
   // If data is null then we will not send a batch request.
   void SendBatchRequest(std::shared_ptr<MultiRaftConsensusData> data);
@@ -119,8 +94,8 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   std::mutex mutex_;
 
-  std::shared_ptr<MultiRaftConsensusData> current_batch_ GUARDED_BY(mutex_);
-  
+  std::shared_ptr<MultiRaftConsensusData> current_batch_;
+
   std::atomic<uint64_t> buffer_start_idx;
 
 };
@@ -136,8 +111,6 @@ class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
   MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
                    kudu::DnsResolver* dns_resolver, const scoped_refptr<MetricEntity>& entity);
 
-  // Add a batcher with the given hostport (if one does not already exist)
-  // and returns the newly created batcher.
   MultiRaftHeartbeatBatcherPtr AddOrGetBatcher(const kudu::consensus::RaftPeerPB& remote_peer_pb);
 
  private:
@@ -147,11 +120,10 @@ class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
 
   std::mutex mutex_;
 
-  // Uses a weak_ptr value in the map to allow for deallocation of unneeded batchers
-  // since each consensus peer will own a shared_ptr to the batcher (performance optimization).
-  // MultiRaftBatchers will be shared for the same remote peer info.
+  // Uses a weak_ptr to allow decation of unused batchers once no more consensus
+  // peer use it.
   std::unordered_map<HostPort, std::weak_ptr<MultiRaftHeartbeatBatcher>,
-                     HostPortHasher> batchers_ /*GUARDED_BY(mutex_)*/;
+                     HostPortHasher> batchers_;
 
 };
 

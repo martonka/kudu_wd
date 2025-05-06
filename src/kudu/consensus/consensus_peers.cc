@@ -312,7 +312,7 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
 
   controller_.Reset();
 
-  // We do not want to hold the lock in case of a flush happends in multi raft batcher.
+  // We do not want to hold the lock in case of a flush happens in multi raft batcher.
   bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher && 
     request_.ops_size() == 0 && multi_raft_batcher_;
   request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE 
@@ -357,9 +357,9 @@ bool Peer::CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l) {
     return false;
   }
   if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
-    uint64_t idx = pending_idx_; 
+    uint64_t idx = pending_idx_;
     l.unlock();
-    multi_raft_batcher_->FlushMessage(pending_idx_); 
+    multi_raft_batcher_->FlushMessage(pending_idx_);
     // TODO
     // if (CanDiscard(idx)) {
     //  request_status = RequestStatus::NO_ACTIVE;

@@ -61,15 +61,14 @@ TAG_FLAG(multi_raft_heartbeat_interval_ms, runtime);
 DECLARE_int32(raft_heartbeat_interval_ms);
 
 DEFINE_bool(enable_multi_raft_heartbeat_batcher,
-            true,
+            false,
             "Whether to enable the batching of raft heartbeats.");
 TAG_FLAG(enable_multi_raft_heartbeat_batcher, experimental);
 TAG_FLAG(enable_multi_raft_heartbeat_batcher, runtime);
 
-DEFINE_int32(multi_raft_batch_size, 30, "Maximum batch size for a multi-raft consensus payload.");
+DEFINE_int32(multi_raft_batch_size, 10, "Maximum batch size for a multi-raft consensus payload.");
 TAG_FLAG(multi_raft_batch_size, experimental);
 TAG_FLAG(multi_raft_batch_size, runtime);
-
 
 DECLARE_int32(consensus_rpc_timeout_ms);
 
@@ -97,7 +96,7 @@ namespace {
     res.set_safe_timestamp(req.safe_timestamp());
     res.set_last_idx_appended_to_leader(req.last_idx_appended_to_leader());
 
-    return res;  
+    return res;
   }
 }
 struct MultiRaftHeartbeatBatcher::MultiRaftConsensusData  {
@@ -120,7 +119,7 @@ void MultiRaftHeartbeatBatcher::Start() {
   const auto flush_interval = std::min(FLAGS_raft_heartbeat_interval_ms / 2
                                        , FLAGS_multi_raft_heartbeat_interval_ms );
   if (flush_interval < FLAGS_multi_raft_heartbeat_interval_ms) {
-    LOG(WARNING) << "multi_raft_heartbeat_interval_ms should be at most half of" 
+    LOG(WARNING) << "multi_raft_heartbeat_interval_ms should be at most half of"
                  << "heartbeat_interval_ms, forcing its value to: " << flush_interval;
   }
   batch_sender_ = PeriodicTimer::Create(
@@ -139,7 +138,7 @@ MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
                                                   HeartbeatResponseCallback callback) {
   std::shared_ptr<MultiRaftConsensusData> data = nullptr;
-  uint64_t res; 
+  uint64_t res;
   VLOG(1) << "Adding request to batch ";
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -193,7 +192,7 @@ MultiRaftHeartbeatBatcher::PrepareNextBatchRequestUnlocked() {
   batch_sender_->Snooze();
   auto data = std::move(current_batch_);
   current_batch_ = std::make_shared<MultiRaftConsensusData>();
-  buffer_start_idx.fetch_add(current_batch_->response_callback_data.size(), std::memory_order_relaxed); 
+  buffer_start_idx.fetch_add(current_batch_->response_callback_data.size(), std::memory_order_relaxed);
   return data;
 }
 
