@@ -16,27 +16,39 @@
 // under the License.
 
 #include <kudu/consensus/multi_raft_batcher.h>
+
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <ostream>
+#include <string>
+#include <type_traits>
 #include <mutex>
 #include <utility>
 #include <vector>
 
+#include <gflags/gflags.h>
+#include <glog/logging.h>
+
 #include "kudu/common/wire_protocol.h"
-
-#include "kudu/consensus/consensus_meta.h"
-#include "kudu/rpc/proxy.h"
-
-#include "kudu/rpc/periodic.h"
-
-#include "kudu/util/flag_tags.h"
-
 #include "kudu/consensus/consensus.pb.h"
 #include "kudu/consensus/consensus.proxy.h"
 #include "kudu/consensus/metadata.pb.h"
+#include "kudu/consensus/opid.pb.h"
+#include "kudu/gutil/macros.h"
+#include "kudu/rpc/periodic.h"
+#include "kudu/rpc/rpc_controller.h"
+#include "kudu/util/flag_tags.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
+
+namespace kudu {
+class DnsResolver;
+namespace rpc {
+class Messenger;
+}  // namespace rpc
+}  // namespace kudu
 
 METRIC_DEFINE_counter(server,
                       heartbeat_batch_count,
@@ -80,13 +92,9 @@ scoped_refptr<kudu::Counter> no_op_heartbeat_count;
 using kudu::DnsResolver;
 using rpc::PeriodicTimer;
 
-class ConsensusServiceProxy;
-typedef std::unique_ptr<ConsensusServiceProxy> ConsensusServiceProxyPtr;
-
 namespace {
 BatchedNoOpConsensusRequestPB ToBatchRequest(const ConsensusRequestPB& req) {
   BatchedNoOpConsensusRequestPB res;
-
   res.set_tablet_id(req.tablet_id());
   res.set_caller_term(req.caller_term());
   *res.mutable_preceding_id() = req.preceding_id();

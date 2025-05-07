@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -46,6 +47,7 @@ class RowBlockRow;
 namespace consensus {
 class ConsensusMetadata;
 class ConsensusMetadataManager;
+class MultiRaftManager;
 }
 
 namespace tablet {

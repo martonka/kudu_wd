@@ -18,21 +18,30 @@
 #ifndef KUDU_MULTI_RAFT_BATCHER_H
 #define KUDU_MULTI_RAFT_BATCHER_H
 
+#include <atomic>
+#include <functional>
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
+
+#include "kudu/consensus/consensus.proxy.h"
+#include "kudu/gutil/integral_types.h"
+#include "kudu/gutil/ref_counted.h"
 #include "kudu/util/net/net_util.h"
-#include "kudu/rpc/rpc_controller.h"
-#include "kudu/rpc/proxy.h"
-#include "kudu/rpc/periodic.h"
 
 namespace kudu {
+class DnsResolver;
+class MetricEntity;
+namespace rpc {
+class Messenger;
+class PeriodicTimer;
+class RpcController;
+}  // namespace rpc
+
 namespace consensus {
-class MultiRaftManager;
-class ConsensusServiceProxy;
-class ConsensusRequestPB;
-class ConsensusResponsePB;
 class BatchedNoOpConsensusResponsePB;
-class MultiRaftConsensusRequestPB;
+class ConsensusRequestPB;
 class MultiRaftConsensusResponsePB;
 class RaftPeerPB;
 

@@ -16,7 +16,6 @@
 // under the License.
 
 #include "kudu/consensus/consensus_peers.h"
-#include "kudu/consensus/multi_raft_batcher.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -38,6 +37,7 @@
 #include "kudu/consensus/consensus.proxy.h"
 #include "kudu/consensus/consensus_queue.h"
 #include "kudu/consensus/metadata.pb.h"
+#include "kudu/consensus/multi_raft_batcher.h"
 #include "kudu/consensus/opid_util.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/port.h"
@@ -49,7 +49,6 @@
 #include "kudu/util/fault_injection.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/logging.h"
-#include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/net/net_util.h"
 #include "kudu/util/pb_util.h"
