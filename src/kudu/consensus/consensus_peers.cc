@@ -142,9 +142,9 @@ Peer::Peer(RaftPeerPB peer_pb,
                   peer_pb_.last_known_addr().host(), peer_pb_.last_known_addr().port())),
       peer_proxy_factory_(peer_proxy_factory),
       queue_(queue),
-      multi_raft_batcher_(multi_raft_batcher),
       failed_attempts_(0),
       messenger_(peer_proxy_factory_->messenger()),
+      multi_raft_batcher_(multi_raft_batcher),
       raft_pool_token_(raft_pool_token),
       request_pending_(RequestStatus::NO_ACTIVE),
       closed_(false),
@@ -189,7 +189,8 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
   // very low chance
   if (request_pending_ != RequestStatus::NO_ACTIVE) {
     auto req_state = request_pending_.load(std::memory_order_relaxed);
-    if (multi_raft_batcher_ && (req_state == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED || req_state == RequestStatus::PENDING_BUFFERED_PREPARE)) { 
+    if (multi_raft_batcher_ && (req_state == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED ||
+                                req_state == RequestStatus::PENDING_BUFFERED_PREPARE)) {
       std::unique_lock l(peer_lock_);
       // TODO: possibly discard the message from the buffer than flushing.
       if (CheckPendingAndFlushBuffered(l)) {
@@ -197,7 +198,6 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
       }
     } else {
       return Status::OK();
-
     }
   }
 
@@ -313,9 +313,9 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   controller_.Reset();
 
   // We do not want to hold the lock in case of a flush happens in multi raft batcher.
-  bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher && 
+  bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher &&
     request_.ops_size() == 0 && multi_raft_batcher_;
-  request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE 
+  request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE
     : RequestStatus::PENDING_NON_BUFFERED;
 
   l.unlock();
@@ -329,9 +329,13 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   }
   if (will_batch) {
     response_.mutable_status()->Swap(new ConsensusStatusPB());
-    pending_idx_ = multi_raft_batcher_->AddRequestToBatch(&request_,
-                                         [s_this](const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root,
-                                            const BatchedNoOpConsensusResponsePB* resp){ s_this->ProcessResponseFromBatch(controller, root, resp); });
+    pending_idx_ = multi_raft_batcher_->AddRequestToBatch(
+        &request_,
+        [s_this](const rpc::RpcController& controller,
+                 const MultiRaftConsensusResponsePB& root,
+                 const BatchedNoOpConsensusResponsePB* resp) {
+          s_this->ProcessResponseFromBatch(controller, root, resp);
+        });
     {
       std::unique_lock l2(peer_lock_);
       if (request_pending_ == RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH) {
@@ -359,7 +363,7 @@ bool Peer::CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l) {
   if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
     uint64_t idx = pending_idx_;
     l.unlock();
-    multi_raft_batcher_->FlushMessage(pending_idx_);
+    multi_raft_batcher_->FlushMessage(idx);
     // TODO
     // if (CanDiscard(idx)) {
     //  request_status = RequestStatus::NO_ACTIVE;
@@ -402,9 +406,9 @@ void Peer::StartElection() {
     });
 }
 
-
-void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller, const MultiRaftConsensusResponsePB& root, const BatchedNoOpConsensusResponsePB* resp) {
-
+void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller,
+                                    const MultiRaftConsensusResponsePB& root,
+                                    const BatchedNoOpConsensusResponsePB* resp) {
   response_.Clear();
   if (root.has_error()) {
     *response_.mutable_error() = root.error();

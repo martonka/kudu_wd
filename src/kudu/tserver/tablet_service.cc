@@ -28,6 +28,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <gflags/gflags.h>
@@ -279,7 +280,7 @@ namespace {
 
     return res;
   }
-}
+} // namespace
 namespace tserver {
 
 const char* SCANNER_BYTES_READ_METRIC_NAME = "scanner_bytes_read";
@@ -329,7 +330,7 @@ std::pair<Status, TabletServerErrorPB::Code> GetTabletNotRunningCode(
     s = s.CloneAndAppend(replica->error().ToString());
     return {s, TabletServerErrorPB::TABLET_FAILED};
   }
-  return {s, TabletServerErrorPB::TABLET_NOT_RUNNING}; 
+  return {s, TabletServerErrorPB::TABLET_NOT_RUNNING};
 }
 
 template<class RespClass>
@@ -1802,15 +1803,16 @@ void ConsensusServiceImpl::UpdateConsensus(const ConsensusRequestPB* req,
   context->RespondSuccess();
 }
 
-void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::MultiRaftConsensusRequestPB* req,
-                                                    class consensus::MultiRaftConsensusResponsePB* resp,
-                                                    rpc::RpcContext* context) {
+void ConsensusServiceImpl::MultiRaftUpdateConsensus(
+    const class consensus::MultiRaftConsensusRequestPB* req,
+    class consensus::MultiRaftConsensusResponsePB* resp,
+    rpc::RpcContext* context) {
   DVLOG(3) << "Received Batched Consensus Update RPC: " << SecureDebugString(*req);
   if (!CheckUuidMatchOrRespond(tablet_manager_, "UpdateConsensus", req, resp, context)) {
     return;
   }
   resp->set_responder_uuid(tablet_manager_->NodeInstance().permanent_uuid());
-  for(const auto& single_req: req->consensus_requests()) {
+  for (const auto& single_req: req->consensus_requests()) {
     auto single_resp = resp->add_consensus_responses();
     auto set_error = [single_resp](const Status& s, const TabletServerErrorPB::Code& error_code) {
       auto error = single_resp->mutable_error();
@@ -1834,16 +1836,15 @@ void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::Multi
 
     if (!consensus) {
       set_error(Status::ServiceUnavailable("Raft Consensus unavailable",
-                                            "Tablet replica not initialized"),
-                                           TabletServerErrorPB::TABLET_NOT_RUNNING 
-      );
+                                           "Tablet replica not initialized"),
+                TabletServerErrorPB::TABLET_NOT_RUNNING);
       continue;
     }
     // mzzzzz Se if it can be optimized
 
     const auto req2 = ToSingleRequest(*req, single_req);
     auto resp2 = ConsensusResponsePB();
-    // mzzzzzzz we know that there is no op. So maybe make a simpler call. 
+    // mzzzzzzz we know that there is no op. So maybe make a simpler call.
     s = consensus->Update(&req2, &resp2);
     if (PREDICT_FALSE(!s.ok())) {
       // Clear the response first, since a partially-filled response could
@@ -1861,7 +1862,6 @@ void ConsensusServiceImpl::MultiRaftUpdateConsensus(const class consensus::Multi
     }
   }
   context->RespondSuccess();
-
 }
 
 void ConsensusServiceImpl::RequestConsensusVote(const VoteRequestPB* req,

@@ -54,9 +54,9 @@ PeerManager::PeerManager(string tablet_id,
       local_uuid_(std::move(local_uuid)),
       peer_proxy_factory_(peer_proxy_factory),
       queue_(queue),
-      multi_raft_manager_(multi_raft_manager),
       raft_pool_token_(raft_pool_token),
-      log_(std::move(log)) {
+      log_(std::move(log)),
+      multi_raft_manager_(multi_raft_manager) {
 }
 
 PeerManager::~PeerManager() {

@@ -38,7 +38,9 @@ class RaftPeerPB;
 
 typedef std::unique_ptr<ConsensusServiceProxy> ConsensusServiceProxyPtr;
 
-using HeartbeatResponseCallback = std::function<void(const rpc::RpcController&, const MultiRaftConsensusResponsePB&, const BatchedNoOpConsensusResponsePB*)>;
+using HeartbeatResponseCallback = std::function<void(const rpc::RpcController&,
+                                                     const MultiRaftConsensusResponsePB&,
+                                                     const BatchedNoOpConsensusResponsePB*)>;
 
 // - MultiRaftHeartbeatBatcher is responsible for the batching of NoOp heartbeats
 //   among peers that are communicating with remote peers at the same tserver
@@ -63,11 +65,11 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   void IncrementNoOpPackageCounter();
 
-  // Flushes the buffer if the given message is still in it  
+  // Flushes the buffer if the given message is still in it
   void FlushMessage(uint64 msg_idx) {
     // No need locking for the check. If the message is already flushed, and there
     // are new messages in the buffer, than an unecessary (but fine) flush will hapen.
-    if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed) ) {
+    if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed)) {
       PrepareAndSendBatchRequest();
     }
   }

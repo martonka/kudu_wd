@@ -517,8 +517,8 @@ Status TSTabletManager::Init(Timer* start_tablets,
 
   InitLocalRaftPeerPB();
 
-  multi_raft_manager_ = std::make_unique<consensus::MultiRaftManager>(server_->messenger(),
-                                                                      server_->dns_resolver(), server_->metric_entity());
+  multi_raft_manager_ = std::make_unique<consensus::MultiRaftManager>(
+      server_->messenger(), server_->dns_resolver(), server_->metric_entity());
 
   vector<scoped_refptr<TabletMetadata>> metas(tablet_ids.size());
 
