@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -49,6 +50,7 @@ namespace consensus {
 class PeerMessageQueue;
 class PeerProxy;
 class PeerProxyFactory;
+class MultiRaftHeartbeatBatcher;
 
 // A remote peer in consensus.
 //
@@ -118,6 +120,7 @@ class Peer :
                             std::string tablet_id,
                             std::string leader_uuid,
                             PeerMessageQueue* queue,
+                            std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
                             ThreadPoolToken* raft_pool_token,
                             PeerProxyFactory* peer_proxy_factory,
                             std::shared_ptr<Peer>* peer);
@@ -127,18 +130,23 @@ class Peer :
        std::string tablet_id,
        std::string leader_uuid,
        PeerMessageQueue* queue,
+       std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
        ThreadPoolToken* raft_pool_token,
        PeerProxyFactory* peer_proxy_factory);
 
  private:
   void SendNextRequest(bool even_if_queue_empty);
 
+  void ProcessResponseFromBatch(const rpc::RpcController& controller,
+                                const MultiRaftConsensusResponsePB& root,
+                                const BatchedNoOpConsensusResponsePB* resp);
+  void ProcessSingleResponse();
   // Signals that a response was received from the peer.
   //
   // This method is called from the reactor thread and calls
   // DoProcessResponse() on raft_pool_token_ to do any work that requires IO or
   // lock-taking.
-  void ProcessResponse();
+  void ProcessResponse(const rpc::RpcController& controller);
 
   // Run on 'raft_pool_token'. Does response handling that requires IO or may block.
   void DoProcessResponse();
@@ -201,6 +209,8 @@ class Peer :
 
   std::shared_ptr<rpc::Messenger> messenger_;
 
+  std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher_;
+
   // Thread pool token used to construct requests to this peer.
   //
   // RaftConsensus owns this shared token and is responsible for destroying it.
@@ -218,7 +228,18 @@ class Peer :
   // concurrently.
   simple_spinlock peer_lock_;
 
-  std::atomic<bool> request_pending_;
+  enum class RequestStatus {
+    NO_ACTIVE,
+    PENDING_NON_BUFFERED,
+    PENDING_BUFFERED_PREPARE,
+    PENDING_BUFFERED_POSSIBLY_IN_BUFFERED,
+    PENDING_BUFFERED_REQUEST_TO_FLUSH,
+    PENDING_BUFFERED_FLUSHED
+  };
+  std::atomic<RequestStatus> request_pending_;
+  std::uint64_t pending_idx_;
+  bool CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l);
+
   std::atomic<bool> closed_;
   bool has_sent_first_request_;
 };
