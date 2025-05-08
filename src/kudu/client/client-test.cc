@@ -191,6 +191,8 @@ DECLARE_uint32(dns_resolver_cache_capacity_mb);
 DECLARE_uint32(txn_keepalive_interval_ms);
 DECLARE_uint32(txn_staleness_tracker_interval_ms);
 DECLARE_uint32(txn_manager_status_table_num_replicas);
+DECLARE_int32(multi_raft_batch_size);
+DECLARE_bool(enable_multi_raft_heartbeat_batcher);
 
 DEFINE_int32(test_scan_num_rows, 1000, "Number of rows to insert and scan");
 
@@ -10352,10 +10354,14 @@ TEST_F(ClientTestAutoIncrementingColumn, ConcurrentWrites) {
   for (const auto mode: {KuduClient::LEADER_ONLY, KuduClient::CLOSEST_REPLICA,
                          KuduClient::FIRST_REPLICA}) {
     vector<string> row;
-    KuduScanner scanner(table.get());
-    ASSERT_OK(scanner.SetSelection(mode));
-    ASSERT_OK(ScanToStrings(&scanner, &row));
-    ASSERT_EQ(kNumRows, row.size());
+    ASSERT_EVENTUALLY([&] {
+      KuduScanner scanner(table.get());
+      ASSERT_OK(scanner.SetSelection(mode));
+      row.clear();
+      ASSERT_OK(ScanToStrings(&scanner, &row));
+      ASSERT_EQ(kNumRows, row.size());
+    });
+    sort(row.begin(), row.end());
     rows.push_back(row);
   }
   for (int i = 0; i < 2; i++) {
