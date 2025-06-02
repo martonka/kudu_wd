@@ -80,8 +80,10 @@ class Peer :
   // Signals that this peer has a new request to replicate/store.
   // 'even_if_queue_empty' indicates whether the peer should force
   // send the request even if the queue is empty. This is used for
-  // status-only requests.
-  Status SignalRequest(bool even_if_queue_empty = false);
+  // status-only requests
+  // 'periodic_req' allows us to send periodic heartbeats in batches, removing
+  // some load from the system.
+  Status SignalRequest(bool even_if_queue_empty = false, bool periodic_req = false);
 
   // Starts a leader election on this peer.
   //
@@ -135,7 +137,7 @@ class Peer :
        PeerProxyFactory* peer_proxy_factory);
 
  private:
-  void SendNextRequest(bool even_if_queue_empty);
+  void SendNextRequest(bool even_if_queue_empty, bool periodic_req = false);
 
   void ProcessResponseFromBatch(const rpc::RpcController& controller,
                                 const MultiRaftConsensusResponsePB& root,
@@ -237,8 +239,8 @@ class Peer :
     PENDING_BUFFERED_FLUSHED
   };
   std::atomic<RequestStatus> request_pending_;
-  std::uint64_t pending_idx_;
-  bool CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l);
+  std::uint64_t pending_idx_ = -1;
+  bool CheckPendingAndDiscardBuffered(bool periodic_req);
 
   std::atomic<bool> closed_;
   bool has_sent_first_request_;

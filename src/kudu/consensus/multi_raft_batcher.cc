@@ -61,7 +61,7 @@ METRIC_DEFINE_counter(server,
                       no_op_heartbeat_count,
                       "Noop Heartbeat messages",
                       kudu::MetricUnit::kRequests,
-                      "Number of no-op heathbeat messages sent",
+                      "Number of no-op heartbeat messages sent",
                       kudu::MetricLevel::kInfo);
 
 DEFINE_int32(multi_raft_heartbeat_interval_ms,
@@ -111,6 +111,9 @@ struct MultiRaftHeartbeatBatcher::MultiRaftConsensusData {
   MultiRaftConsensusResponsePB batch_res;
   rpc::RpcController controller;
   std::vector<HeartbeatResponseCallback> response_callback_data;
+  // Buffer will be 10-20 messages, so a vector is more efficient than a map.
+  std::vector<uint64_t> buffered_msg_ids_;
+
 };
 
 MultiRaftHeartbeatBatcher::MultiRaftHeartbeatBatcher(
@@ -143,11 +146,41 @@ void MultiRaftHeartbeatBatcher::Start() {
 
 MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 
+bool MultiRaftHeartbeatBatcher::DiscardMessage(uint64 msg_idx) {
+  // No need locking for the check. If the message is already flushed, and there
+  // are new messages in the buffer, then the find after locking will return
+  // end() anyway.
+  if (msg_idx < buffer_start_idx.load(std::memory_order_relaxed)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto& ids = current_batch_->buffered_msg_ids_;
+  auto pos = std::find(ids.begin(), ids.end(), msg_idx);
+  if (pos == ids.end()) {
+    return false;
+  }
+  //PrepareAndSendBatchRequest();
+  //return false;
+  DCHECK(current_batch_->batch_req.consensus_requests_size() == ids.size());
+  DCHECK(current_batch_->response_callback_data.size() == ids.size());
+  auto idx = std::distance(ids.begin(), pos);
+  if (idx + 1 != ids.size()) {
+    ids[idx] = ids.back();
+    current_batch_->batch_req.mutable_consensus_requests()->SwapElements(
+        idx, ids.size() - 1);
+    current_batch_->response_callback_data[idx] = current_batch_->response_callback_data.back();
+  }
+  ids.pop_back();
+  current_batch_->batch_req.mutable_consensus_requests()->RemoveLast();
+  current_batch_->response_callback_data.pop_back();
+  return true;
+}
+
 uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* request,
                                                       HeartbeatResponseCallback callback) {
   std::shared_ptr<MultiRaftConsensusData> data = nullptr;
-  uint64_t res;
   VLOG(1) << "Adding request to batch ";
+  uint64_t msg_id = 0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (request->has_caller_uuid()) {
@@ -164,13 +197,11 @@ uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* reques
       DCHECK(request->dest_uuid() == current_batch_->batch_req.dest_uuid());
     }
 
-    res = buffer_start_idx.load(std::memory_order_relaxed) +
-          current_batch_->response_callback_data.size();
+    msg_id = next_idx++;
 
     current_batch_->response_callback_data.push_back(std::move(callback));
-
-    // Add a ConsensusRequestPB to the batch
     *current_batch_->batch_req.add_consensus_requests() = ToBatchRequest(*request);
+    current_batch_->buffered_msg_ids_.push_back(msg_id);
 
     if (FLAGS_multi_raft_batch_size > 0 &&
         current_batch_->response_callback_data.size() >= FLAGS_multi_raft_batch_size) {
@@ -180,7 +211,7 @@ uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* reques
   if (data) {
     SendBatchRequest(data);
   }
-  return res;
+  return msg_id;
 }
 
 void MultiRaftHeartbeatBatcher::PrepareAndSendBatchRequest() {
@@ -200,8 +231,7 @@ MultiRaftHeartbeatBatcher::PrepareNextBatchRequestUnlocked() {
   batch_sender_->Snooze();
   auto data = std::move(current_batch_);
   current_batch_ = std::make_shared<MultiRaftConsensusData>();
-  buffer_start_idx.fetch_add(current_batch_->response_callback_data.size(),
-                             std::memory_order_relaxed);
+  buffer_start_idx = next_idx;
   return data;
 }
 

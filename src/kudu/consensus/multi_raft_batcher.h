@@ -74,10 +74,11 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   void IncrementNoOpPackageCounter();
 
+  // Returns true if the message was found in the buffer and discarded.
+  bool DiscardMessage(uint64 msg_idx);
+
   // Flushes the buffer if the given message is still in it
   void FlushMessage(uint64 msg_idx) {
-    // No need locking for the check. If the message is already flushed, and there
-    // are new messages in the buffer, than an unecessary (but fine) flush will hapen.
     if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed)) {
       PrepareAndSendBatchRequest();
     }
@@ -108,6 +109,9 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   std::shared_ptr<MultiRaftConsensusData> current_batch_;
 
   std::atomic<uint64_t> buffer_start_idx;
+
+  uint64_t next_idx = 0;  
+
 
 };
 

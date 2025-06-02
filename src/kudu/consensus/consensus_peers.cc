@@ -37,7 +37,7 @@
 #include "kudu/consensus/consensus.proxy.h"
 #include "kudu/consensus/consensus_queue.h"
 #include "kudu/consensus/metadata.pb.h"
-#include "kudu/consensus/multi_raft_batcher.h"
+#include "kudu/consensus/multi_raft_batcher.h" // IWYU pragma: keep
 #include "kudu/consensus/opid_util.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/port.h"
@@ -164,14 +164,14 @@ void Peer::Init() {
       messenger_,
       [w_this = std::move(w_this)]() {
         if (auto p = w_this.lock()) {
-          WARN_NOT_OK(p->SignalRequest(true), "SignalRequest failed");
+          WARN_NOT_OK(p->SignalRequest(true, true), "SignalRequest failed");
         }
       },
       MonoDelta::FromMilliseconds(FLAGS_raft_heartbeat_interval_ms));
   heartbeater_->Start();
 }
 
-Status Peer::SignalRequest(bool even_if_queue_empty) {
+Status Peer::SignalRequest(bool even_if_queue_empty, bool periodic_req) {
   // This is a best effort logic in checking for 'closed_' and
   // 'request_pending_': it's not necessary to block if some other thread has
   // taken 'peer_lock_' and about to update 'closed_'/'request_pending_' since
@@ -186,13 +186,13 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
   // this is a best effort logic (since we do not lock). In case of a unsyncronized
   // change in status, writes might have to wait for the next hearthbeat flush time (happens with a
   // very low chance
-  if (request_pending_ != RequestStatus::NO_ACTIVE) {
-    auto req_state = request_pending_.load(std::memory_order_relaxed);
-    if (multi_raft_batcher_ && (req_state == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED ||
-                                req_state == RequestStatus::PENDING_BUFFERED_PREPARE)) {
+  auto req_state = request_pending_.load(std::memory_order_relaxed);
+  if (req_state != RequestStatus::NO_ACTIVE) {
+    if (multi_raft_batcher_ &&
+        (req_state == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED ||
+         req_state == RequestStatus::PENDING_BUFFERED_PREPARE)) {
       std::unique_lock l(peer_lock_);
-      // TODO: possibly discard the message from the buffer than flushing.
-      if (CheckPendingAndFlushBuffered(l)) {
+      if (CheckPendingAndDiscardBuffered(periodic_req)) {
         return Status::OK();
       }
     } else {
@@ -203,22 +203,21 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
   // Capture a weak_ptr reference into the submitted functor so that we can
   // safely handle the functor outliving its peer.
   weak_ptr<Peer> w_this(shared_from_this());
-  return raft_pool_token_->Submit([even_if_queue_empty, w_this = std::move(w_this)]() {
+  return raft_pool_token_->Submit([even_if_queue_empty, periodic_req, w_this = std::move(w_this)]() {
     if (auto p = w_this.lock()) {
-      p->SendNextRequest(even_if_queue_empty);
+      p->SendNextRequest(even_if_queue_empty, periodic_req);
     }
   });
 }
 
-void Peer::SendNextRequest(bool even_if_queue_empty) {
+void Peer::SendNextRequest(bool even_if_queue_empty, bool periodic_req) {
   std::unique_lock l(peer_lock_);
   if (PREDICT_FALSE(closed_)) {
     return;
   }
 
-  // Only allow one request at a time.
-  if (CheckPendingAndFlushBuffered(l)) {
-    return;
+  if (CheckPendingAndDiscardBuffered(periodic_req)) {
+      return;
   }
 
   // For the first request sent by the peer, we send it even if the queue is empty,
@@ -312,11 +311,11 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   controller_.Reset();
 
   // We do not want to hold the lock in case of a flush happens in multi raft batcher.
-  bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher &&
-    request_.ops_size() == 0 && multi_raft_batcher_;
+  bool will_batch = periodic_req && FLAGS_enable_multi_raft_heartbeat_batcher &&
+    !req_has_ops && multi_raft_batcher_;
   request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE
     : RequestStatus::PENDING_NON_BUFFERED;
-
+  pending_idx_ = -1;
   l.unlock();
 
   // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
@@ -354,19 +353,27 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
   }
 }
 
-bool Peer::CheckPendingAndFlushBuffered(std::unique_lock<simple_spinlock>& l) {
+bool Peer::CheckPendingAndDiscardBuffered(bool periodic_req) {
   auto request_status = request_pending_.load(std::memory_order_relaxed);
-  if (request_status == RequestStatus::NO_ACTIVE) { // re-check locked
+  if (request_status == RequestStatus::NO_ACTIVE) {  // re-check locked
     return false;
   }
   if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
     uint64_t idx = pending_idx_;
-    l.unlock();
-    multi_raft_batcher_->FlushMessage(idx);
-    // TODO
-    // if (CanDiscard(idx)) {
-    //  request_status = RequestStatus::NO_ACTIVE;
-    //  return false; }
+    if (periodic_req) {
+      // Since other operations snooze the timer and buffer flush time should 
+      // be at most half of the heartbeat interval, we should not end here.
+      multi_raft_batcher_->FlushMessage(idx);
+    } else {
+      if (multi_raft_batcher_->DiscardMessage(idx)) {
+        request_status = RequestStatus::NO_ACTIVE;
+        return false;
+      } else {
+        // Message was already flushed from the buffer, there is no point
+        // resening it.
+        request_status = RequestStatus::PENDING_BUFFERED_FLUSHED;
+      }
+    }
   } else if (request_status == RequestStatus::PENDING_BUFFERED_PREPARE) {
     request_pending_ = RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH;
   }
