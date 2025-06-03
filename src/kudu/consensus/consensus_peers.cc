@@ -183,9 +183,9 @@ Status Peer::SignalRequest(bool even_if_queue_empty, bool periodic_req) {
 
   // Only allow one request at a time. No sense waking up the
   // raft thread pool if the task will just abort anyway.
-  // this is a best effort logic (since we do not lock). In case of a unsyncronized
-  // change in status, writes might have to wait for the next hearthbeat flush time (happens with a
-  // very low chance
+  // this is a best effort logic (since we do not lock). In case of an unsynchronized
+  // change in status, writes might have to wait for the next heartbeat flush time (happens with a
+  // very low chance)
   auto req_state = request_pending_.load(std::memory_order_relaxed);
   if (req_state != RequestStatus::NO_ACTIVE) {
     if (multi_raft_batcher_ &&
@@ -361,8 +361,6 @@ bool Peer::CheckPendingAndDiscardBuffered(bool periodic_req) {
   if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
     uint64_t idx = pending_idx_;
     if (periodic_req) {
-      // Since other operations snooze the timer and buffer flush time should 
-      // be at most half of the heartbeat interval, we should not end here.
       multi_raft_batcher_->FlushMessage(idx);
     } else {
       if (multi_raft_batcher_->DiscardMessage(idx)) {
@@ -370,7 +368,7 @@ bool Peer::CheckPendingAndDiscardBuffered(bool periodic_req) {
         return false;
       } else {
         // Message was already flushed from the buffer, there is no point
-        // resening it.
+        // resending it.
         request_status = RequestStatus::PENDING_BUFFERED_FLUSHED;
       }
     }

@@ -65,7 +65,7 @@ METRIC_DEFINE_counter(server,
                       kudu::MetricLevel::kInfo);
 
 DEFINE_int32(multi_raft_heartbeat_interval_ms,
-             500,
+             250,
              "The heartbeat interval for batch Raft replication.");
 TAG_FLAG(multi_raft_heartbeat_interval_ms, experimental);
 TAG_FLAG(multi_raft_heartbeat_interval_ms, runtime);

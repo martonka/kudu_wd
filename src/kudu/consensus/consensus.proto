@@ -416,7 +416,7 @@ message ConsensusResponsePB {
   optional tserver.TabletServerErrorPB error = 999;
 }
 
-// Same as ConsensusRequestPB. But dest_uuid and tablet_id are shared between
+// Same as ConsensusRequestPB. But dest_uuid and caller_uuid are shared between
 // messages
 message BatchedNoOpConsensusRequestPB {
   required string tablet_id = 1;
@@ -435,7 +435,8 @@ message MultiRaftConsensusRequestPB {
   required bytes caller_uuid = 3;
 }
 
-// Same as ConsensusRequestPB. But responder_uuid is shared between messages
+// Same as ConsensusResponsePB. But responder_uuid and certain type of errors
+// are shared between messages.
 message BatchedNoOpConsensusResponsePB {
   optional int64 responder_term = 1;
   optional ConsensusStatusPB status = 2;

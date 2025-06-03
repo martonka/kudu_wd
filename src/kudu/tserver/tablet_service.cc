@@ -1840,7 +1840,6 @@ void ConsensusServiceImpl::MultiRaftUpdateConsensus(
                 TabletServerErrorPB::TABLET_NOT_RUNNING);
       continue;
     }
-    // mzzzzz Se if it can be optimized
 
     const auto req2 = ToSingleRequest(*req, single_req);
     auto resp2 = ConsensusResponsePB();

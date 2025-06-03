@@ -230,16 +230,38 @@ class Peer :
   // concurrently.
   simple_spinlock peer_lock_;
 
+  // This is a best effort logic, just as it was before the no-op batching.
+  // The main purpose of this is to avoid holding the lock for longer periods
+  // (preparing a request with actual ops or flushing a batch request etc.),
+  // and also make sure writes/leadership assert requests are not delayed by
+  // a no-op waiting in the multi raft consensus buffer.
   enum class RequestStatus {
-    NO_ACTIVE,
-    PENDING_NON_BUFFERED,
-    PENDING_BUFFERED_PREPARE,
-    PENDING_BUFFERED_POSSIBLY_IN_BUFFERED,
-    PENDING_BUFFERED_REQUEST_TO_FLUSH,
-    PENDING_BUFFERED_FLUSHED
+    NO_ACTIVE, // There is no active request to this peer.
+    PENDING_NON_BUFFERED, // There is a pending request that is not buffered.
+                          // Either batching is turned off or this is a write
+                          // or leadership assert request.
+    PENDING_BUFFERED_PREPARE, // A thread is preparing a buffered request.
+                          // If another thread wants to send a request too
+                          // then it should set the status to
+                          // PENDING_BUFFERED_REQUEST_TO_FLUSH, so the
+                          // message will be flushed to the peer without delay.
+    PENDING_BUFFERED_POSSIBLY_IN_BUFFERED, // There is a no-op message in
+                          // progress that might either be in the buffer or
+                          // already sent. In case it is still in the buffer,
+                          // we can discard it and send the new message.
+
+    PENDING_BUFFERED_REQUEST_TO_FLUSH, // If another thread is preparing a
+                          // buffered request (PENDING_BUFFERED_PREPARE), then
+                          // we can use this status to indicate that we want
+                          // to flush the request to the peer without delay.
+    PENDING_BUFFERED_FLUSHED // We are sure that the pending request is
+                          // flushed to the peer, so there is no way to discard
+                          // it. (This is set after explicitly flushing or
+                          // DiscardMessage reports that the message already
+                          // left the buffer.)
   };
   std::atomic<RequestStatus> request_pending_;
-  std::uint64_t pending_idx_ = -1;
+  uint64_t pending_idx_ = -1;
   bool CheckPendingAndDiscardBuffered(bool periodic_req);
 
   std::atomic<bool> closed_;
