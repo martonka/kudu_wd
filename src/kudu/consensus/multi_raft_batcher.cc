@@ -156,7 +156,7 @@ bool MultiRaftHeartbeatBatcher::DiscardMessage(uint64 msg_idx) {
   if (msg_idx < buffer_start_idx.load(std::memory_order_relaxed)) {
     return false;
   }
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::lock_guard<std::mutex> lock(current_batch_mutex_);
   auto& ids = current_batch_->buffered_msg_ids_;
   auto pos = std::find(ids.begin(), ids.end(), msg_idx);
   if (pos == ids.end()) {
@@ -185,7 +185,7 @@ uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* reques
   VLOG(1) << "Adding request to batch ";
   uint64_t msg_id = 0;
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(current_batch_mutex_);
     if (request->has_caller_uuid()) {
       if (!current_batch_->batch_req.has_caller_uuid()) {
         current_batch_->batch_req.set_caller_uuid(request->caller_uuid());
@@ -220,7 +220,7 @@ uint64_t MultiRaftHeartbeatBatcher::AddRequestToBatch(ConsensusRequestPB* reques
 void MultiRaftHeartbeatBatcher::PrepareAndSendBatchRequest() {
   std::shared_ptr<MultiRaftConsensusData> data;
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(current_batch_mutex_);
     data = PrepareNextBatchRequestUnlocked();
   }
   SendBatchRequest(data);
