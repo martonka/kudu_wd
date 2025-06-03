@@ -15,8 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#ifndef KUDU_MULTI_RAFT_BATCHER_H
-#define KUDU_MULTI_RAFT_BATCHER_H
+#pragma once
 
 #include <atomic>
 #include <functional>
@@ -144,4 +143,3 @@ class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
 
 }  // namespace consensus
 } // namespace kudu
-#endif  // KUDU_MULTI_RAFT_BATCHER_H
