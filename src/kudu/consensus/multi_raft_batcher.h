@@ -67,7 +67,7 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   void Start();
 
   // Returns an id, that can be used to flush the message if it is still buffered.
-  // This is needed so writes does not need to wait for the no-op hearthbeat.
+  // This is needed so writes does not need to wait for the no-op heartbeat.
   uint64_t AddRequestToBatch(ConsensusRequestPB* request,
                          HeartbeatResponseCallback callback);
 
@@ -78,6 +78,7 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   // Flushes the buffer if the given message is still in it
   void FlushMessage(uint64 msg_idx) {
+    // False positive is fine here, as we will just make an unecesary flush
     if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed)) {
       PrepareAndSendBatchRequest();
     }
@@ -101,16 +102,28 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   ConsensusServiceProxyPtr consensus_proxy_;
 
+  // Timer to flush the buffer if it was not flushed by the batch size for
+  // FLAGS_multi_raft_heartbeat_interval_ms ms.
   std::shared_ptr<rpc::PeriodicTimer> batch_sender_;
 
-  std::mutex mutex_;
+  // Mutex for data in current_batch_
+  std::mutex current_batch_mutex_;
 
+  // Contains the current queue of requests (+ placeholder for responses)
+  // and callbacks. When it is either full or the timer expires, it is replaced
+  // by a new object and sent out (but we do not need to hold the lock for the
+  // sending).
   std::shared_ptr<MultiRaftConsensusData> current_batch_;
 
+  // Each message put into the queue is assigned a strictly increasing id which
+  // can be used to check if the message is still in the buffer and discard it
+  // if it is not flushed yet.
+  // This allows for a non-blocking way to check (id >= buffer_start_idx) that
+  // has a very slim chance of false positive (in which case we will just make
+  // an unnecessary flush or unnecessarily acquire the current_batch_mutex_ and
+  // recheck).
+  uint64_t next_idx = 0;
   std::atomic<uint64_t> buffer_start_idx;
-
-  uint64_t next_idx = 0;  
-
 
 };
 

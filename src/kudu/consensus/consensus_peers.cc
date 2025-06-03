@@ -311,7 +311,7 @@ void Peer::SendNextRequest(bool even_if_queue_empty, bool periodic_req) {
   controller_.Reset();
 
   // We do not want to hold the lock in case of a flush happens in multi raft batcher.
-  bool will_batch = periodic_req && FLAGS_enable_multi_raft_heartbeat_batcher &&
+  bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher && periodic_req &&
     !req_has_ops && multi_raft_batcher_;
   request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE
     : RequestStatus::PENDING_NON_BUFFERED;
@@ -322,7 +322,7 @@ void Peer::SendNextRequest(bool even_if_queue_empty, bool periodic_req) {
   // that this object outlives the RPC.
   shared_ptr<Peer> s_this = shared_from_this();
 
-  if (request_.ops_size() == 0 && multi_raft_batcher_) {
+  if (!req_has_ops && multi_raft_batcher_) {
     multi_raft_batcher_->IncrementNoOpPackageCounter();
   }
   if (will_batch) {

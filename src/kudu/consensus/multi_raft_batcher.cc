@@ -50,6 +50,9 @@ class Messenger;
 }  // namespace rpc
 }  // namespace kudu
 
+// TODO(martonka): remove counters after performance measurements.
+// The purpose of these counters is to make sure batch sending actually
+// decreased the CPU usage without reducing the number of heartbeats sent.
 METRIC_DEFINE_counter(server,
                       heartbeat_batch_count,
                       "Heartbeat batch messages",
@@ -279,9 +282,6 @@ MultiRaftManager::MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
 
 MultiRaftHeartbeatBatcherPtr MultiRaftManager::AddOrGetBatcher(
     const kudu::consensus::RaftPeerPB& remote_peer_pb) {
-  if (!FLAGS_enable_multi_raft_heartbeat_batcher) {
-    return nullptr;
-  }
 
   auto hostport = HostPortFromPB(remote_peer_pb.last_known_addr());
   std::lock_guard<std::mutex> lock(mutex_);
