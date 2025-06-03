@@ -283,6 +283,9 @@ MultiRaftManager::MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
 MultiRaftHeartbeatBatcherPtr MultiRaftManager::AddOrGetBatcher(
     const kudu::consensus::RaftPeerPB& remote_peer_pb) {
 
+  if (!FLAGS_enable_multi_raft_heartbeat_batcher) {
+    return nullptr;
+  }
   auto hostport = HostPortFromPB(remote_peer_pb.last_known_addr());
   std::lock_guard<std::mutex> lock(mutex_);
   MultiRaftHeartbeatBatcherPtr batcher;
