@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -46,6 +47,7 @@ class RowBlockRow;
 namespace consensus {
 class ConsensusMetadata;
 class ConsensusMetadataManager;
+class MultiRaftManager;
 }
 
 namespace tablet {
@@ -436,6 +438,8 @@ class SysCatalogTable {
   consensus::RaftPeerPB local_peer_pb_;
 
   scoped_refptr<Counter> oversized_write_requests_;
+
+  std::unique_ptr<consensus::MultiRaftManager> multi_raft_manager_;
 };
 
 } // namespace master

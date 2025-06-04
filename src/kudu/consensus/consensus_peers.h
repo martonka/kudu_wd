@@ -46,6 +46,7 @@ class PeriodicTimer;
 }
 
 namespace consensus {
+class MultiRaftHeartbeatBatcher;
 class PeerMessageQueue;
 class PeerProxy;
 class PeerProxyFactory;
@@ -78,8 +79,10 @@ class Peer :
   // Signals that this peer has a new request to replicate/store.
   // 'even_if_queue_empty' indicates whether the peer should force
   // send the request even if the queue is empty. This is used for
-  // status-only requests.
-  Status SignalRequest(bool even_if_queue_empty = false);
+  // status-only requests
+  // 'periodic_req' allows us to send periodic heartbeats in batches, removing
+  // some load from the system.
+  Status SignalRequest(bool even_if_queue_empty = false, bool periodic_req = false);
 
   // Starts a leader election on this peer.
   //
@@ -118,6 +121,7 @@ class Peer :
                             std::string tablet_id,
                             std::string leader_uuid,
                             PeerMessageQueue* queue,
+                            std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
                             ThreadPoolToken* raft_pool_token,
                             PeerProxyFactory* peer_proxy_factory,
                             std::shared_ptr<Peer>* peer);
@@ -127,18 +131,23 @@ class Peer :
        std::string tablet_id,
        std::string leader_uuid,
        PeerMessageQueue* queue,
+       std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
        ThreadPoolToken* raft_pool_token,
        PeerProxyFactory* peer_proxy_factory);
 
  private:
-  void SendNextRequest(bool even_if_queue_empty);
+  void SendNextRequest(bool even_if_queue_empty, bool periodic_req = false);
 
+  void ProcessResponseFromBatch(const rpc::RpcController& controller,
+                                const MultiRaftConsensusResponsePB& root,
+                                const BatchedNoOpConsensusResponsePB* resp);
+  void ProcessSingleResponse();
   // Signals that a response was received from the peer.
   //
   // This method is called from the reactor thread and calls
   // DoProcessResponse() on raft_pool_token_ to do any work that requires IO or
   // lock-taking.
-  void ProcessResponse();
+  void ProcessResponse(const rpc::RpcController& controller);
 
   // Run on 'raft_pool_token'. Does response handling that requires IO or may block.
   void DoProcessResponse();
@@ -201,6 +210,8 @@ class Peer :
 
   std::shared_ptr<rpc::Messenger> messenger_;
 
+  std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher_;
+
   // Thread pool token used to construct requests to this peer.
   //
   // RaftConsensus owns this shared token and is responsible for destroying it.
@@ -218,7 +229,40 @@ class Peer :
   // concurrently.
   simple_spinlock peer_lock_;
 
-  std::atomic<bool> request_pending_;
+  // This is a best effort logic, just as it was before the no-op batching.
+  // The main purpose of this is to avoid holding the lock for longer periods
+  // (preparing a request with actual ops or flushing a batch request etc.),
+  // and also make sure writes/leadership assert requests are not delayed by
+  // a no-op waiting in the multi raft consensus buffer.
+  enum class RequestStatus {
+    NO_ACTIVE, // There is no active request to this peer.
+    PENDING_NON_BUFFERED, // There is a pending request that is not buffered.
+                          // Either batching is turned off or this is a write
+                          // or leadership assert request.
+    PENDING_BUFFERED_PREPARE, // A thread is preparing a buffered request.
+                          // If another thread wants to send a request too
+                          // then it should set the status to
+                          // PENDING_BUFFERED_REQUEST_TO_FLUSH, so the
+                          // message will be flushed to the peer without delay.
+    PENDING_BUFFERED_POSSIBLY_IN_BUFFERED, // There is a no-op message in
+                          // progress that might either be in the buffer or
+                          // already sent. In case it is still in the buffer,
+                          // we can discard it and send the new message.
+
+    PENDING_BUFFERED_REQUEST_TO_FLUSH, // If another thread is preparing a
+                          // buffered request (PENDING_BUFFERED_PREPARE), then
+                          // we can use this status to indicate that we want
+                          // to flush the request to the peer without delay.
+    PENDING_BUFFERED_FLUSHED // We are sure that the pending request is
+                          // flushed to the peer, so there is no way to discard
+                          // it. (This is set after explicitly flushing or
+                          // DiscardMessage reports that the message already
+                          // left the buffer.)
+  };
+  std::atomic<RequestStatus> request_pending_;
+  uint64_t pending_idx_ = -1;
+  bool CheckPendingAndDiscardBuffered(bool periodic_req);
+
   std::atomic<bool> closed_;
   bool has_sent_first_request_;
 };

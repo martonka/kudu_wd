@@ -43,6 +43,7 @@
 #include "kudu/consensus/log.h"
 #include "kudu/consensus/log_anchor_registry.h"
 #include "kudu/consensus/metadata.pb.h"
+#include "kudu/consensus/multi_raft_batcher.h"
 #include "kudu/consensus/opid.pb.h"
 #include "kudu/consensus/opid_util.h"
 #include "kudu/consensus/quorum_util.h"
@@ -346,7 +347,10 @@ TSTabletManager::TSTabletManager(TabletServer* server)
     shutdown_latch_(1),
     metric_registry_(server->metric_registry()),
     tablet_copy_metrics_(server->metric_entity()),
-    state_(MANAGER_INITIALIZING) {
+    state_(MANAGER_INITIALIZING),
+    multi_raft_manager_(std::make_unique<consensus::MultiRaftManager>(
+      server_->messenger(), server_->dns_resolver(), server_->metric_entity())) {
+
   // A heartbeat msg without statistics will be considered to be from an old
   // version, thus it's necessary to trigger updating stats as soon as possible.
   next_update_time_ = MonoTime::Now();
@@ -1433,6 +1437,7 @@ void TSTabletManager::OpenTablet(const scoped_refptr<tablet::TabletReplica>& rep
                        server_->messenger(),
                        server_->result_tracker(),
                        log,
+                       multi_raft_manager_.get(),
                        server_->tablet_prepare_pool(),
                        server_->dns_resolver());
     if (!s.ok()) {
