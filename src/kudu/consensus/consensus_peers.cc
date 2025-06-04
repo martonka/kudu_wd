@@ -37,6 +37,7 @@
 #include "kudu/consensus/consensus.proxy.h"
 #include "kudu/consensus/consensus_queue.h"
 #include "kudu/consensus/metadata.pb.h"
+#include "kudu/consensus/multi_raft_batcher.h" // IWYU pragma: keep
 #include "kudu/consensus/opid_util.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/port.h"
@@ -85,6 +86,9 @@ TAG_FLAG(enable_tablet_copy, unsafe);
 
 DECLARE_int32(raft_heartbeat_interval_ms);
 
+DECLARE_bool(enable_multi_raft_heartbeat_batcher);
+
+
 using kudu::pb_util::SecureShortDebugString;
 using kudu::rpc::Messenger;
 using kudu::rpc::PeriodicTimer;
@@ -108,6 +112,7 @@ void Peer::NewRemotePeer(RaftPeerPB peer_pb,
                          string tablet_id,
                          string leader_uuid,
                          PeerMessageQueue* queue,
+                         std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
                          ThreadPoolToken* raft_pool_token,
                          PeerProxyFactory* peer_proxy_factory,
                          shared_ptr<Peer>* peer) {
@@ -116,6 +121,7 @@ void Peer::NewRemotePeer(RaftPeerPB peer_pb,
       std::move(tablet_id),
       std::move(leader_uuid),
       queue,
+      multi_raft_batcher,
       raft_pool_token,
       peer_proxy_factory));
   new_peer->Init();
@@ -126,6 +132,7 @@ Peer::Peer(RaftPeerPB peer_pb,
            string tablet_id,
            string leader_uuid,
            PeerMessageQueue* queue,
+           std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
            ThreadPoolToken* raft_pool_token,
            PeerProxyFactory* peer_proxy_factory)
     : tablet_id_(std::move(tablet_id)),
@@ -138,8 +145,9 @@ Peer::Peer(RaftPeerPB peer_pb,
       queue_(queue),
       failed_attempts_(0),
       messenger_(peer_proxy_factory_->messenger()),
+      multi_raft_batcher_(multi_raft_batcher),
       raft_pool_token_(raft_pool_token),
-      request_pending_(false),
+      request_pending_(RequestStatus::NO_ACTIVE),
       closed_(false),
       has_sent_first_request_(false) {
   CreateProxyIfNeeded();
@@ -158,14 +166,14 @@ void Peer::Init() {
       messenger_,
       [w_this = std::move(w_this)]() {
         if (auto p = w_this.lock()) {
-          WARN_NOT_OK(p->SignalRequest(true), "SignalRequest failed");
+          WARN_NOT_OK(p->SignalRequest(true, true), "SignalRequest failed");
         }
       },
       MonoDelta::FromMilliseconds(FLAGS_raft_heartbeat_interval_ms));
   heartbeater_->Start();
 }
 
-Status Peer::SignalRequest(bool even_if_queue_empty) {
+Status Peer::SignalRequest(bool even_if_queue_empty, bool periodic_req) {
   // This is a best effort logic in checking for 'closed_' and
   // 'request_pending_': it's not necessary to block if some other thread has
   // taken 'peer_lock_' and about to update 'closed_'/'request_pending_' since
@@ -177,29 +185,42 @@ Status Peer::SignalRequest(bool even_if_queue_empty) {
 
   // Only allow one request at a time. No sense waking up the
   // raft thread pool if the task will just abort anyway.
-  if (request_pending_) {
-    return Status::OK();
+  // this is a best effort logic (since we do not lock). In case of an unsynchronized
+  // change in status, writes might have to wait for the next heartbeat flush time (happens with a
+  // very low chance)
+  auto req_state = request_pending_.load(std::memory_order_relaxed);
+  if (req_state != RequestStatus::NO_ACTIVE) {
+    if (multi_raft_batcher_ &&
+        (req_state == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED ||
+         req_state == RequestStatus::PENDING_BUFFERED_PREPARE)) {
+      std::unique_lock l(peer_lock_);
+      if (CheckPendingAndDiscardBuffered(periodic_req)) {
+        return Status::OK();
+      }
+    } else {
+      return Status::OK();
+    }
   }
 
   // Capture a weak_ptr reference into the submitted functor so that we can
   // safely handle the functor outliving its peer.
   weak_ptr<Peer> w_this(shared_from_this());
-  return raft_pool_token_->Submit([even_if_queue_empty, w_this = std::move(w_this)]() {
-    if (auto p = w_this.lock()) {
-      p->SendNextRequest(even_if_queue_empty);
-    }
+  return raft_pool_token_->Submit(
+    [even_if_queue_empty, periodic_req, w_this = std::move(w_this)]() {
+      if (auto p = w_this.lock()) {
+        p->SendNextRequest(even_if_queue_empty, periodic_req);
+      }
   });
 }
 
-void Peer::SendNextRequest(bool even_if_queue_empty) {
+void Peer::SendNextRequest(bool even_if_queue_empty, bool periodic_req) {
   std::unique_lock l(peer_lock_);
   if (PREDICT_FALSE(closed_)) {
     return;
   }
 
-  // Only allow one request at a time.
-  if (request_pending_) {
-    return;
+  if (CheckPendingAndDiscardBuffered(periodic_req)) {
+      return;
   }
 
   // For the first request sent by the peer, we send it even if the queue is empty,
@@ -249,7 +270,7 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
     Status s = PrepareTabletCopyRequest();
     if (s.ok()) {
       controller_.Reset();
-      request_pending_ = true;
+      request_pending_ = RequestStatus::PENDING_NON_BUFFERED;
       l.unlock();
       // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
       // that this object outlives the RPC.
@@ -291,16 +312,73 @@ void Peer::SendNextRequest(bool even_if_queue_empty) {
       << SecureShortDebugString(request_);
 
   controller_.Reset();
-  request_pending_ = true;
+
+  // We do not want to hold the lock in case of a flush happens in multi raft batcher.
+  bool will_batch = FLAGS_enable_multi_raft_heartbeat_batcher && periodic_req &&
+    !req_has_ops && multi_raft_batcher_;
+  request_pending_ = will_batch ? RequestStatus::PENDING_BUFFERED_PREPARE
+    : RequestStatus::PENDING_NON_BUFFERED;
+  pending_idx_ = -1;
   l.unlock();
 
   // Capture a shared_ptr reference into the RPC callback so that we're guaranteed
   // that this object outlives the RPC.
   shared_ptr<Peer> s_this = shared_from_this();
-  proxy_->UpdateAsync(request_, &response_, &controller_,
-                      [s_this]() {
-                        s_this->ProcessResponse();
-                      });
+
+  if (!req_has_ops && multi_raft_batcher_) {
+    multi_raft_batcher_->IncrementNoOpPackageCounter();
+  }
+  if (will_batch) {
+    response_.mutable_status()->Swap(new ConsensusStatusPB());
+    pending_idx_ = multi_raft_batcher_->AddRequestToBatch(
+        &request_,
+        [s_this](const rpc::RpcController& controller,
+                 const MultiRaftConsensusResponsePB& root,
+                 const BatchedNoOpConsensusResponsePB* resp) {
+          s_this->ProcessResponseFromBatch(controller, root, resp);
+        });
+    {
+      std::unique_lock l2(peer_lock_);
+      if (request_pending_ == RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH) {
+        request_pending_ = RequestStatus::PENDING_BUFFERED_FLUSHED;
+        l2.unlock();
+        multi_raft_batcher_->FlushMessage(pending_idx_);
+      } else {
+        request_pending_ = RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED;
+      }
+    }
+  } else {
+    proxy_->UpdateAsync(request_, &response_, &controller_,
+                        [s_this]() {
+                          s_this->ProcessSingleResponse();
+                        });
+
+  }
+}
+
+bool Peer::CheckPendingAndDiscardBuffered(bool periodic_req) {
+  auto request_status = request_pending_.load(std::memory_order_relaxed);
+  if (request_status == RequestStatus::NO_ACTIVE) {  // re-check locked
+    return false;
+  }
+  if (request_status == RequestStatus::PENDING_BUFFERED_POSSIBLY_IN_BUFFERED) {
+    uint64_t idx = pending_idx_;
+    if (periodic_req) {
+      multi_raft_batcher_->FlushMessage(idx);
+    } else {
+      if (multi_raft_batcher_->DiscardMessage(idx)) {
+        request_status = RequestStatus::NO_ACTIVE;
+        return false;
+      } else {
+        // Message was already flushed from the buffer, there is no point
+        // resending it.
+        request_status = RequestStatus::PENDING_BUFFERED_FLUSHED;
+      }
+    }
+  } else if (request_status == RequestStatus::PENDING_BUFFERED_PREPARE) {
+    request_pending_ = RequestStatus::PENDING_BUFFERED_REQUEST_TO_FLUSH;
+  }
+  return true;
 }
 
 void Peer::StartElection() {
@@ -335,18 +413,50 @@ void Peer::StartElection() {
     });
 }
 
-void Peer::ProcessResponse() {
+void Peer::ProcessResponseFromBatch(const rpc::RpcController& controller,
+                                    const MultiRaftConsensusResponsePB& root,
+                                    const BatchedNoOpConsensusResponsePB* resp) {
+  response_.Clear();
+  if (root.has_error()) {
+    *response_.mutable_error() = root.error();
+  }
+  if (root.has_responder_uuid()) {
+    response_.set_responder_uuid(root.responder_uuid());
+  }
+  if (resp != nullptr) {
+    if (resp->has_responder_term()) {
+      response_.set_responder_term(resp->responder_term());
+    }
+    if (resp->has_status()) {
+      *response_.mutable_status() = resp->status();
+    }
+    if (resp->has_server_quiescing()) {
+      response_.set_server_quiescing(resp->server_quiescing());
+    }
+    if (resp->has_error()) {
+      *response_.mutable_error() = resp->error();
+    }
+  }
+
+  ProcessResponse(controller);
+}
+
+void Peer::ProcessSingleResponse() {
+  ProcessResponse(controller_);
+}
+
+void Peer::ProcessResponse(const rpc::RpcController& controller) {
   // Note: This method runs on the reactor thread.
   std::lock_guard lock(peer_lock_);
   if (PREDICT_FALSE(closed_)) {
     return;
   }
-  CHECK(request_pending_);
+  CHECK(request_pending_.load(std::memory_order_relaxed) != RequestStatus::NO_ACTIVE);
 
   MAYBE_FAULT(FLAGS_fault_crash_after_leader_request_fraction);
 
   // Process RpcController errors.
-  const auto controller_status = controller_.status();
+  const auto controller_status = controller.status();
   if (!controller_status.ok()) {
     auto ps = controller_status.IsRemoteError() ?
         PeerStatus::REMOTE_ERROR : PeerStatus::RPC_LAYER_ERROR;
@@ -407,7 +517,7 @@ void Peer::ProcessResponse() {
     LOG_WITH_PREFIX_UNLOCKED(WARNING) << Substitute(
         "unable to process peer response: $0: $1",
          s.ToString(), SecureShortDebugString(response_));
-    request_pending_ = false;
+    request_pending_ = RequestStatus::NO_ACTIVE;
   }
 }
 
@@ -420,9 +530,9 @@ void Peer::DoProcessResponse() {
 
   {
     std::lock_guard lock(peer_lock_);
-    CHECK(request_pending_);
+    CHECK(request_pending_ != RequestStatus::NO_ACTIVE);
     failed_attempts_ = 0;
-    request_pending_ = false;
+    request_pending_ = RequestStatus::NO_ACTIVE;
   }
 
   if (send_more_immediately) {
@@ -445,8 +555,8 @@ void Peer::ProcessTabletCopyResponse() {
   if (PREDICT_FALSE(closed_)) {
     return;
   }
-  CHECK(request_pending_);
-  request_pending_ = false;
+  CHECK(request_pending_ != RequestStatus::NO_ACTIVE);
+  request_pending_ = RequestStatus::NO_ACTIVE;
 
   // If the response is OK, or ALREADY_INPROGRESS, then consider the RPC successful.
   const auto controller_status = controller_.status();
@@ -495,7 +605,7 @@ void Peer::ProcessResponseErrorUnlocked(const Status& status) {
                  failed_attempts_,
                  kNumRetriesBetweenLoggingFailedRequest);
   }
-  request_pending_ = false;
+  request_pending_ = RequestStatus::NO_ACTIVE;
 }
 
 bool Peer::CreateProxyIfNeeded() {
