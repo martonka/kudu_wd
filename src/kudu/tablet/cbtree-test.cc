@@ -123,7 +123,8 @@ TEST_F(TestCBTree, TestNodeSizes) {
 }
 
 TEST_F(TestCBTree, TestLeafNode) {
-  LeafNode<BTreeTraits> lnode(false);
+  
+  alignas(8) LeafNode<BTreeTraits> lnode(false);
   ThreadSafeArena arena(1024);
 
   Slice k1("key1");
