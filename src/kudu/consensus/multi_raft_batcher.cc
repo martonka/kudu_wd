@@ -151,7 +151,7 @@ void MultiRaftHeartbeatBatcher::Start() {
 MultiRaftHeartbeatBatcher::~MultiRaftHeartbeatBatcher() = default;
 
 bool MultiRaftHeartbeatBatcher::DiscardMessage(uint64 msg_idx) {
-  // No need locking for the check. If the message is already flushed, and there
+  // No need to lock for the check. If the message is already flushed, and there
   // are new messages in the buffer, then the find after locking will return
   // end() anyway.
   if (msg_idx < buffer_start_idx.load(std::memory_order_relaxed)) {

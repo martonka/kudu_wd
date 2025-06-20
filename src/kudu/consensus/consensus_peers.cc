@@ -185,7 +185,7 @@ Status Peer::SignalRequest(bool even_if_queue_empty, bool periodic_req) {
 
   // Only allow one request at a time. No sense waking up the
   // raft thread pool if the task will just abort anyway.
-  // this is a best effort logic (since we do not lock). In case of an unsynchronized
+  // This is a best effort logic (since we do not lock). In case of an unsynchronized
   // change in status, writes might have to wait for the next heartbeat flush time (happens with a
   // very low chance)
   auto req_state = request_pending_.load(std::memory_order_relaxed);

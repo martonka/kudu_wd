@@ -1844,7 +1844,8 @@ void ConsensusServiceImpl::MultiRaftUpdateConsensus(
 
     const auto req2 = ToSingleRequest(*req, single_req);
     auto resp2 = ConsensusResponsePB();
-    // mzzzzzzz we know that there is no op. So maybe make a simpler call.
+    // TODO(martonka): We know that this is a no-op. So maybe we could handle it
+    // in a more efficient way.
     s = consensus->Update(&req2, &resp2);
     if (PREDICT_FALSE(!s.ok())) {
       // Clear the response first, since a partially-filled response could

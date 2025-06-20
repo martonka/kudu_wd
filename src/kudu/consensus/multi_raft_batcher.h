@@ -111,7 +111,7 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
 
   // Contains the current queue of requests (+ placeholder for responses)
   // and callbacks. When it is either full or the timer expires, it is replaced
-  // by a new object and sent out (but we do not need to hold the lock for the
+  // by a new object and sent out (but we do not need to hold the lock while
   // sending).
   std::shared_ptr<MultiRaftConsensusData> current_batch_;
 
