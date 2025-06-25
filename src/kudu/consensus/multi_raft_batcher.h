@@ -135,8 +135,11 @@ using MultiRaftHeartbeatBatcherPtr = std::shared_ptr<MultiRaftHeartbeatBatcher>;
 // if they are connected to the same remote host.
 class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
  public:
-  MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
-                   kudu::DnsResolver* dns_resolver, const scoped_refptr<MetricEntity>& entity);
+  MultiRaftManager(kudu::DnsResolver* dns_resolver, const scoped_refptr<MetricEntity>& entity);
+
+  void Init(const std::shared_ptr<rpc::Messenger>& messenger) {
+    messenger_ = messenger;
+  }
 
   MultiRaftHeartbeatBatcherPtr AddOrGetBatcher(const kudu::consensus::RaftPeerPB& remote_peer_pb);
 

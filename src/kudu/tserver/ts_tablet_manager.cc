@@ -349,7 +349,7 @@ TSTabletManager::TSTabletManager(TabletServer* server)
     tablet_copy_metrics_(server->metric_entity()),
     state_(MANAGER_INITIALIZING),
     multi_raft_manager_(std::make_unique<consensus::MultiRaftManager>(
-      server_->messenger(), server_->dns_resolver(), server_->metric_entity())) {
+      server_->dns_resolver(), server_->metric_entity())) {
 
   // A heartbeat msg without statistics will be considered to be from an old
   // version, thus it's necessary to trigger updating stats as soon as possible.
@@ -451,6 +451,8 @@ Status TSTabletManager::Init(Timer* start_tablets,
                              std::atomic<int>* tablets_processed,
                              std::atomic<int>* tablets_total) {
   CHECK_EQ(state(), MANAGER_INITIALIZING);
+
+  multi_raft_manager_->Init(server_->messenger());
 
   // Start the tablet copy thread pool. We set a max queue size of 0 so that if
   // the number of requests exceeds the number of threads, a
