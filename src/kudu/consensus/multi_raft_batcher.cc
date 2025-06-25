@@ -273,10 +273,9 @@ void MultiRaftHeartbeatBatcher::MultiRaftUpdateHeartbeatResponseCallback(
   }
 }
 
-MultiRaftManager::MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
-                                   kudu::DnsResolver* dns_resolver,
+MultiRaftManager::MultiRaftManager(kudu::DnsResolver* dns_resolver,
                                    const scoped_refptr<MetricEntity>& entity)
-    : messenger_(messenger), dns_resolver_(dns_resolver) {
+    :dns_resolver_(dns_resolver) {
   no_op_heartbeat_count = METRIC_no_op_heartbeat_count.Instantiate(entity);
   heartbeat_batch_count = METRIC_heartbeat_batch_count.Instantiate(entity);
 }
@@ -284,9 +283,7 @@ MultiRaftManager::MultiRaftManager(std::shared_ptr<rpc::Messenger> messenger,
 MultiRaftHeartbeatBatcherPtr MultiRaftManager::AddOrGetBatcher(
     const kudu::consensus::RaftPeerPB& remote_peer_pb) {
 
-  if (!FLAGS_enable_multi_raft_heartbeat_batcher) {
-    return nullptr;
-  }
+  DCHECK(messenger_);
   auto hostport = HostPortFromPB(remote_peer_pb.last_known_addr());
   std::lock_guard<std::mutex> lock(mutex_);
   MultiRaftHeartbeatBatcherPtr batcher;

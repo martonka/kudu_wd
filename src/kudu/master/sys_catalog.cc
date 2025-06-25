@@ -193,9 +193,10 @@ SysCatalogTable::SysCatalogTable(Master* master,
       cmeta_manager_(new ConsensusMetadataManager(master_->fs_manager())),
       leader_cb_(std::move(leader_cb)),
       multi_raft_manager_(std::make_unique<consensus::MultiRaftManager>(
-          master_->messenger(), master_->dns_resolver(), master_->metric_entity())) {
+          master_->dns_resolver(), master_->metric_entity())) {
   oversized_write_requests_ = master_->metric_entity()->FindOrCreateCounter(
       &METRIC_sys_catalog_oversized_write_requests);
+  multi_raft_manager_->Init(master_->messenger());
 }
 
 SysCatalogTable::~SysCatalogTable() {
