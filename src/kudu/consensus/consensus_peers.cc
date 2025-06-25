@@ -329,7 +329,6 @@ void Peer::SendNextRequest(bool even_if_queue_empty, bool periodic_req) {
     multi_raft_batcher_->IncrementNoOpPackageCounter();
   }
   if (will_batch) {
-    response_.mutable_status()->Swap(new ConsensusStatusPB());
     pending_idx_ = multi_raft_batcher_->AddRequestToBatch(
         &request_,
         [s_this](const rpc::RpcController& controller,
