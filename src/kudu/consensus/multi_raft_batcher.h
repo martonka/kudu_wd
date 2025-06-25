@@ -74,12 +74,12 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   void IncrementNoOpPackageCounter();
 
   // Returns true if the message was found in the buffer and discarded.
-  bool DiscardMessage(uint64 msg_idx);
+  bool DiscardMessage(uint64_t msg_idx);
 
   // Flushes the buffer if the given message is still in it
-  void FlushMessage(uint64 msg_idx) {
+  void FlushMessage(uint64_t msg_idx) {
     // False positive is fine here, as we will just make an unecesary flush
-    if (msg_idx >= buffer_start_idx.load(std::memory_order_relaxed)) {
+    if (msg_idx >= buffer_start_idx_.load(std::memory_order_relaxed)) {
       PrepareAndSendBatchRequest();
     }
   }
@@ -122,8 +122,8 @@ class MultiRaftHeartbeatBatcher: public std::enable_shared_from_this<MultiRaftHe
   // has a very slim chance of false positive (in which case we will just make
   // an unnecessary flush or unnecessarily acquire the current_batch_mutex_ and
   // recheck).
-  uint64_t next_idx = 0;
-  std::atomic<uint64_t> buffer_start_idx;
+  uint64_t next_idx_ = 0;
+  std::atomic<uint64_t> buffer_start_idx_;
 
 };
 
@@ -139,6 +139,8 @@ class MultiRaftManager: public std::enable_shared_from_this<MultiRaftManager> {
                    kudu::DnsResolver* dns_resolver, const scoped_refptr<MetricEntity>& entity);
 
   MultiRaftHeartbeatBatcherPtr AddOrGetBatcher(const kudu::consensus::RaftPeerPB& remote_peer_pb);
+
+
 
  private:
   std::shared_ptr<rpc::Messenger> messenger_;
