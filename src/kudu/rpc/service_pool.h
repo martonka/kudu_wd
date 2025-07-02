@@ -86,6 +86,9 @@ class ServicePool : public RpcService {
     return rpcs_queue_overflow_.get();
   }
 
+  const Counter* RpcsCallCountMetric() const {
+    return rpcs_call_count_.get();
+  }
   const std::string& service_name() const;
 
  private:
@@ -98,6 +101,7 @@ class ServicePool : public RpcService {
   scoped_refptr<Histogram> incoming_queue_time_;
   scoped_refptr<Counter> rpcs_timed_out_in_queue_;
   scoped_refptr<Counter> rpcs_queue_overflow_;
+  scoped_refptr<Counter> rpcs_call_count_;
 
   std::atomic<bool> closing_;
 

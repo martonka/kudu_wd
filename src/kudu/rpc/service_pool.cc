@@ -68,6 +68,12 @@ METRIC_DEFINE_counter(server, rpcs_queue_overflow,
                       "Number of RPCs dropped because the service queue was full.",
                       kudu::MetricLevel::kWarn);
 
+METRIC_DEFINE_counter(server, rpcs_call_count,
+                      "RPC Calls received",
+                      kudu::MetricUnit::kRequests,
+                      "Number of RPCs calls received.",
+                      kudu::MetricLevel::kWarn);
+
 namespace kudu {
 namespace rpc {
 
@@ -79,6 +85,7 @@ ServicePool::ServicePool(unique_ptr<ServiceIf> service,
     incoming_queue_time_(METRIC_rpc_incoming_queue_time.Instantiate(entity)),
     rpcs_timed_out_in_queue_(METRIC_rpcs_timed_out_in_queue.Instantiate(entity)),
     rpcs_queue_overflow_(METRIC_rpcs_queue_overflow.Instantiate(entity)),
+    rpcs_call_count_(METRIC_rpcs_call_count.Instantiate(entity)),
     closing_(false) {
 }
 
@@ -148,6 +155,7 @@ RpcMethodInfo* ServicePool::LookupMethod(const RemoteMethod& method) {
 }
 
 Status ServicePool::QueueInboundCall(unique_ptr<InboundCall> call) {
+  rpcs_call_count_->Increment();
   InboundCall* c = call.release();
 
   vector<uint32_t> unsupported_features;
