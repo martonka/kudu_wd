@@ -226,6 +226,7 @@ METRIC_DECLARE_counter(ops_timed_out_in_prepare_queue);
 METRIC_DECLARE_counter(rows_inserted);
 METRIC_DECLARE_counter(rows_updated);
 METRIC_DECLARE_counter(rows_deleted);
+METRIC_DECLARE_counter(rpcs_call_count);
 METRIC_DECLARE_counter(rpcs_queue_overflow);
 METRIC_DECLARE_counter(rpcs_timed_out_in_queue);
 METRIC_DECLARE_counter(scanners_expired);
@@ -5208,6 +5209,13 @@ TEST_F(OpApplyQueueTest, ApplyQueueBackpressure) {
   // Not all request should succeed -- due to long apply times, some should be
   // rejected.
   EXPECT_GT(num_error, 0);
+  
+  {
+    // All the calls counted.
+    auto rpc_call_count = METRIC_rpcs_call_count.Instantiate(
+        mini_server_->server()->metric_entity());
+    ASSERT_EQ(kNumCalls, rpc_call_count->value());
+  }
 
   {
     // No RPC queue overflows are expected.
