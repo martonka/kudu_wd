@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="2"
+	failures="1"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="0"
+	timestamp="2025-08-06T13:50:43"
+	>
+	<testcase name="cbtree-test" classname="cbtree-test" time="0.338414" status="fail">
+		<failure message=""/>
+		<system-out>Running cbtree-test, redirecting output into /home/zmartonka/kudu/build/debug/test-logs/cbtree-test.txt (attempt 1/1)
+</system-out>
+	</testcase>
+	<testcase name="bitmap-test" classname="bitmap-test" time="0.312896" status="run">
+		<system-out>Running bitmap-test, redirecting output into /home/zmartonka/kudu/build/debug/test-logs/bitmap-test.txt (attempt 1/1)
+</system-out>
+	</testcase>
+</testsuite>
