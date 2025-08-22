@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -46,6 +47,8 @@ class PeriodicTimer;
 }
 
 namespace consensus {
+class MultiRaftHeartbeatBatcher;
+struct MultiRaftConsensusData;
 class PeerMessageQueue;
 class PeerProxy;
 class PeerProxyFactory;
@@ -78,7 +81,7 @@ class Peer :
   // Signals that this peer has a new request to replicate/store.
   // 'even_if_queue_empty' indicates whether the peer should force
   // send the request even if the queue is empty. This is used for
-  // status-only requests.
+  // status-only requests
   Status SignalRequest(bool even_if_queue_empty = false);
 
   // Starts a leader election on this peer.
@@ -118,6 +121,7 @@ class Peer :
                             std::string tablet_id,
                             std::string leader_uuid,
                             PeerMessageQueue* queue,
+                            std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
                             ThreadPoolToken* raft_pool_token,
                             PeerProxyFactory* peer_proxy_factory,
                             std::shared_ptr<Peer>* peer);
@@ -127,18 +131,25 @@ class Peer :
        std::string tablet_id,
        std::string leader_uuid,
        PeerMessageQueue* queue,
+       std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher,
        ThreadPoolToken* raft_pool_token,
        PeerProxyFactory* peer_proxy_factory);
 
  private:
-  void SendNextRequest(bool even_if_queue_empty);
+  // 'mrc_data' allows us to send periodic heartbeats in batches, removing
+  // some load from the system.
+  void SendNextRequest(bool even_if_queue_empty, MultiRaftConsensusData* mrc_data = nullptr);
 
+  void ProcessResponseFromBatch(const rpc::RpcController& controller,
+                                const MultiRaftConsensusResponsePB& root,
+                                const BatchedNoOpConsensusResponsePB* resp);
+  void ProcessSingleResponse();
   // Signals that a response was received from the peer.
   //
   // This method is called from the reactor thread and calls
   // DoProcessResponse() on raft_pool_token_ to do any work that requires IO or
   // lock-taking.
-  void ProcessResponse();
+  void ProcessResponse(const rpc::RpcController& controller);
 
   // Run on 'raft_pool_token'. Does response handling that requires IO or may block.
   void DoProcessResponse();
@@ -200,6 +211,9 @@ class Peer :
   rpc::RpcController controller_;
 
   std::shared_ptr<rpc::Messenger> messenger_;
+
+  std::shared_ptr<MultiRaftHeartbeatBatcher> multi_raft_batcher_;
+  std::optional<uint64_t> multi_raft_batcher_registration_;
 
   // Thread pool token used to construct requests to this peer.
   //
