@@ -190,16 +190,6 @@ Function* ModuleBuilder::GetFunction(const string& name) {
   return CHECK_NOTNULL(module_->getFunction(name));
 }
 
-Type* ModuleBuilder::GetType(const string& name) {
-  CHECK_EQ(state_, kBuilding);
-  // Technically clang is not obligated to name every
-  // class as "class.kudu::ClassName" but so long as there
-  // are no naming conflicts in the LLVM context it appears
-  // to do so (naming conflicts are avoided by having 1 context
-  // per module)
-  return CHECK_NOTNULL(module_->getTypeByName(name));
-}
-
 Value* ModuleBuilder::GetPointerValue(void* ptr) const {
   CHECK_EQ(state_, kBuilding);
   // No direct way of creating constant pointer values in LLVM, so
@@ -295,12 +285,7 @@ void DoOptimizations(Module* module,
 // Modeled after 'setFunctionAttributes' in LLVM's 'include/llvm/CodeGen/CommandFlags.def'
 void SetFunctionAttributes(Module* module) {
   for (auto& func : *module) {
-    AttrBuilder new_attrs;
-    new_attrs.addAttribute("no-frame-pointer-elim", "true");
-    auto attrs = func.getAttributes();
-    attrs = attrs.addAttributes(module->getContext(),
-        AttributeList::FunctionIndex, new_attrs);
-    func.setAttributes(attrs);
+    func.addFnAttr("frame-pointer", "all");
   }
 }
 
