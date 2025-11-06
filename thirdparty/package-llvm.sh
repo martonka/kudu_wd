@@ -26,12 +26,6 @@
 #
 # Summary:
 # 1.  Unpack the llvm tarball
-# 2.  Unpack the clang tarball as tools/clang (rename from cfe-<version> to clang)
-# 3.  Unpack the extra clang tools tarball as tools/clang/tools/extra
-# 4.  Unpack the lld tarball as tools/lld
-# 5.  Unpack the compiler-rt tarball as projects/compiler-rt
-# 6.  Unpack the libc++ tarball as projects/libcxx
-# 7.  Unpack the libc++abi tarball as projects/libcxxabi
 # 9.  Unpack the IWYU tarball in tools/clang/tools/include-what-you-use
 # 10. Create new tarball from the resulting source tree
 #
@@ -40,24 +34,28 @@
 
 set -eux
 
-for ARTIFACT in llvm clang compiler-rt libcxx libcxxabi lld clang-tools-extra; do
-  wget https://github.com/llvm/llvm-project/releases/download/llvmorg-$VERSION/$ARTIFACT-$VERSION.src.tar.xz
-  tar xf $ARTIFACT-$VERSION.src.tar.xz
-  rm $ARTIFACT-$VERSION.src.tar.xz
-done
+if [[ -z "${VERSION:-}" ]] || [[ -z "${IWYU_VERSION:-}" ]]; then
+  echo "Error: VERSION and IWYU_VERSION environment variables must be set and non-empty"
+  exit 1
+fi
+
+# cleanup previous junk from a failed attempt
+if [[ "${1:-}" == "-f" ]]; then
+    rm -rf llvm-project-$VERSION.src llvm-$VERSION.src include-what-you-use tar xf \
+      llvm-$VERSION.src \
+      llvm-$VERSION-iwyu-$IWYU_VERSION.src
+fi
+
+wget https://github.com/llvm/llvm-project/releases/download/llvmorg-$VERSION/llvm-project-$VERSION.src.tar.xz
+tar xf llvm-project-$VERSION.src.tar.xz
+mv llvm-project-$VERSION.src llvm-$VERSION.src
+rm llvm-project-$VERSION.src.tar.xz
 
 IWYU_TAR=include-what-you-use-${IWYU_VERSION}.src.tar.gz
 wget https://include-what-you-use.org/downloads/$IWYU_TAR
-mkdir include-what-you-use
-tar xf $IWYU_TAR -C include-what-you-use
+tar xf $IWYU_TAR
 rm $IWYU_TAR
 
-mv clang-$VERSION.src llvm-$VERSION.src/tools/clang
-mv clang-tools-extra-$VERSION.src llvm-$VERSION.src/tools/clang/tools/extra
-mv lld-$VERSION.src llvm-$VERSION.src/tools/lld
-mv compiler-rt-$VERSION.src llvm-$VERSION.src/projects/compiler-rt
-mv libcxx-$VERSION.src llvm-$VERSION.src/projects/libcxx
-mv libcxxabi-$VERSION.src llvm-$VERSION.src/projects/libcxxabi
-mv include-what-you-use llvm-$VERSION.src/tools/clang/tools/
+mv include-what-you-use llvm-$VERSION.src/
 
 tar czf llvm-$VERSION-iwyu-$IWYU_VERSION.src.tar.gz llvm-$VERSION.src

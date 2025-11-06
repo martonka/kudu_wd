@@ -36,7 +36,7 @@
 #include <llvm/MC/MCSubtargetInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/raw_os_ostream.h>
-#include <llvm/Support/TargetRegistry.h>
+#include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetMachine.h>
 
@@ -125,15 +125,15 @@ int DumpAsm(FuncPtr fptr, const TargetMachine& tm, std::ostream* out, int max_in
   uint64_t base_addr = i64_from_ptr(fptr);
 
   const MCInstrInfo& instr_info = *CHECK_NOTNULL(tm.getMCInstrInfo());
-  const MCRegisterInfo* register_info = CHECK_NOTNULL(tm.getMCRegisterInfo());
   const MCAsmInfo* asm_info = CHECK_NOTNULL(tm.getMCAsmInfo());
-  const MCSubtargetInfo subtarget_info = *CHECK_NOTNULL(tm.getMCSubtargetInfo());
+  const MCRegisterInfo* register_info = CHECK_NOTNULL(tm.getMCRegisterInfo());
+  const MCSubtargetInfo* subtarget_info = CHECK_NOTNULL(tm.getMCSubtargetInfo());
   const Triple& triple = tm.getTargetTriple();
 
-  MCContext context(asm_info, register_info, nullptr);
+  MCContext context(triple, asm_info,  register_info, subtarget_info);
 
   unique_ptr<MCDisassembler> disas(
-    CHECK_NOTNULL(tm.getTarget().createMCDisassembler(subtarget_info, context)));
+    CHECK_NOTNULL(tm.getTarget().createMCDisassembler(*subtarget_info, context)));
 
   // LLVM uses these completely undocumented magic syntax constants which had
   // to be found in lib/Target/$ARCH/MCTargetDesc/$(ARCH)TargetDesc.cpp.
@@ -165,7 +165,7 @@ int DumpAsm(FuncPtr fptr, const TargetMachine& tm, std::ostream* out, int max_in
            << ", skipping instruction>\n" << std::dec;
     } else {
       string annotations;
-      printer->printInst(&inst, addr, annotations, subtarget_info, os);
+      printer->printInst(&inst, addr, annotations, *subtarget_info, os);
       os << " " << annotations << "\n";
       // We need to check the opcode name for "RET" instead of comparing
       // the opcode to llvm::ReturnInst::getOpcode() because the native
