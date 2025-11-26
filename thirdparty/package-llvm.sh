@@ -58,4 +58,10 @@ rm $IWYU_TAR
 
 mv include-what-you-use llvm-$VERSION.src/
 
-tar czf llvm-$VERSION-iwyu-$IWYU_VERSION.src.tar.gz llvm-$VERSION.src
+# We dont use these, and it makes the zip much smaller
+rm -rf llvm-$VERSION.src/llvm/test
+rm -rf llvm-$VERSION.src/clang/test
+rm -rf llvm-$VERSION.src/mlir
+
+
+tar -cJf llvm-$VERSION-iwyu-$IWYU_VERSION.src.tar.xz llvm-$VERSION.src

@@ -73,17 +73,6 @@ fetch_and_expand() {
   fi
 
   FULL_URL="${URL_PREFIX}/${FILENAME}"
-  if [[ "$FILENAME" =~ llvm ]]; then
-    echo "LLVM detected, extracting pre-built archive"
-    if ! $TAR_CMD xf "$TP_SOURCE_DIR/../llvm-16.0.6-iwyu-0.20.src.tar.gz"; then
-      echo "Error extracting pre-built LLVM archive"
-      exit 1
-    fi
-    SUCCESS=1
-    return 0
-  fi
-
-  FULL_URL="${URL_PREFIX}/${FILENAME}"
 
   SUCCESS=0
   # Loop in case we encounter an error.
