@@ -233,8 +233,6 @@ build_llvm() {
   local CMAKE_ARGS=
   local BUILD_TYPE=$1
 
-  # Disable building/installing the llvm-* user tools (per-file LLVM_TOOL_* flags are gone).
-  CMAKE_ARGS="$CMAKE_ARGS -DLLVM_BUILD_TOOLS=OFF"
   # Disable extras we don't need.
   for arg in \
     LLVM_INCLUDE_TESTS \
@@ -270,8 +268,13 @@ build_llvm() {
         CMAKE_ARGS="$CMAKE_ARGS -DGCC_INSTALL_PREFIX=$GCC_INSTALL_PREFIX"
       fi
 
+      # per-file LLVM_TOOL_* flags are gone.
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_BUILD_TOOLS=ON"
+
       CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_RUNTIMES=libc;compiler-rt"
       CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_PROJECTS=clang"
+
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TOOL_LLVM_SYMBOLIZER_BUILD=ON"
       if [ -n "$OS_OSX" ]; then
         # Xcode 12.2 fails to build the sanitizers and they are not needed.
         # We disable them as a workaround to the build issues.
@@ -288,6 +291,7 @@ build_llvm() {
 
       ;;
     "tsan")
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_BUILD_TOOLS=OFF"
       CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_RUNTIMES=libc;libcxx;libcxxabi"
       # Build just the core LLVM libraries, dependent on libc++.
       CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_LIBCXX=ON"
