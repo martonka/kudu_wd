@@ -64,4 +64,4 @@ rm -rf llvm-$VERSION.src/clang/test
 rm -rf llvm-$VERSION.src/mlir
 
 
-tar -cJf llvm-$VERSION-iwyu-$IWYU_VERSION.src.tar.xz llvm-$VERSION.src
+tar -czf llvm-$VERSION-iwyu-$IWYU_VERSION.src.tar.gz llvm-$VERSION.src
