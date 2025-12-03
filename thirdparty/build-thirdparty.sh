@@ -399,7 +399,8 @@ if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GMOCK" ]; then
   build_gmock_gtest
 fi
 
-if [ -n "$F_UNINSTRUMENTED" -o -n "$F_FLATBUFFERS" ]; then
+# Java build always uses the uninstrumented version.
+if [ -n "$F_COMMON" -o -n "$F_FLATBUFFERS" ]; then
   build_flatbuffers
 fi
 
