@@ -4100,6 +4100,8 @@ TEST_F(TabletServerTest, TestAlterSchema) {
                            KeyValue(3, 5) });
 }
 
+
+
 // Adds a new column with no "write default", and then restarts the tablet
 // server. Inserts that were made before the new column was added should
 // still replay properly during bootstrap.
@@ -5445,6 +5447,349 @@ TEST_F(OpPrepareQueueTest, RequestTimesOutInPrepareQueue) {
   ASSERT_FALSE(resp1.has_error());
   const auto& s = ctl1.status();
   ASSERT_TRUE(s.IsTimedOut()) << s.ToString();
+}
+
+TEST_F(TabletServerTest, TestDiffScanAlter) {
+
+   // Insert 100 rows with the usual pattern.
+  const int kStartRow = 0;
+  const int kNumRows = 3;
+  const int kNumToUpdate = 30;
+  const Slice kStrRValue = "ALMA";
+  const Slice kStrWValue = "KORTE";
+
+  std::vector<std::pair<Timestamp, std::string>> timestamps;
+
+  InsertTestRowsDirect(kStartRow, kNumRows);
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "before_mutations");
+  {
+    AlterSchemaRequestPB req;
+    AlterSchemaResponsePB resp;
+    RpcController rpc;
+    SchemaBuilder builder(*tablet_replica_->tablet()->schema());
+    ASSERT_OK(builder.AddColumn(ColumnSchemaBuilder()
+                              .name("test_column")
+                              .type(STRING)
+                              .read_default(&kStrRValue)
+                              .write_default(&kStrWValue)));  
+
+    Schema s2 = builder.Build();
+
+    req.set_dest_uuid(mini_server_->server()->fs_manager()->uuid());
+    req.set_tablet_id(kTabletId);
+    req.set_schema_version(1);
+    ASSERT_OK(SchemaToPB(s2, req.mutable_schema()));
+
+    
+    SCOPED_TRACE(SecureDebugString(req));
+    ASSERT_OK(admin_proxy_->AlterSchema(req, &resp, &rpc));
+    SCOPED_TRACE(SecureDebugString(resp));
+    ASSERT_FALSE(resp.has_error());  
+  }
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_alter");
+
+  InsertTestRowsDirect(kStartRow + kNumRows, kNumRows);
+
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_inserts");
+
+  {
+    AlterSchemaRequestPB req;
+    AlterSchemaResponsePB resp;
+    RpcController rpc;
+    SchemaBuilder builder(*tablet_replica_->tablet()->schema());
+    ASSERT_OK(builder.RemoveColumn("test_column"));
+
+    Schema s2 = builder.Build();
+
+    req.set_dest_uuid(mini_server_->server()->fs_manager()->uuid());
+    req.set_tablet_id(kTabletId);
+    req.set_schema_version(2);
+    ASSERT_OK(SchemaToPB(s2, req.mutable_schema()));
+
+    {
+      SCOPED_TRACE(SecureDebugString(req));
+      ASSERT_OK(admin_proxy_->AlterSchema(req, &resp, &rpc));
+      SCOPED_TRACE(SecureDebugString(resp));
+      ASSERT_FALSE(resp.has_error());
+    }
+  }
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_alter_2");
+  {
+    AlterSchemaRequestPB req;
+    AlterSchemaResponsePB resp;
+    RpcController rpc;
+    SchemaBuilder builder(*tablet_replica_->tablet()->schema());
+    ASSERT_OK(builder.AddColumn(ColumnSchemaBuilder()
+                              .name("test_column")
+                              .type(STRING).nullable(true).write_default(nullptr).read_default(nullptr)
+                              ));  
+
+    Schema s2 = builder.Build();
+
+    req.set_dest_uuid(mini_server_->server()->fs_manager()->uuid());
+    req.set_tablet_id(kTabletId);
+    req.set_schema_version(3);
+    ASSERT_OK(SchemaToPB(s2, req.mutable_schema()));
+
+    
+    SCOPED_TRACE(SecureDebugString(req));
+    ASSERT_OK(admin_proxy_->AlterSchema(req, &resp, &rpc));
+    SCOPED_TRACE(SecureDebugString(resp));
+    ASSERT_FALSE(resp.has_error());  
+  }
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_alter_3");
+
+  InsertTestRowsDirect(kStartRow + 2 * kNumRows, kNumRows);
+  
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_inserts_2");
+
+  {
+    AlterSchemaRequestPB req;
+    AlterSchemaResponsePB resp;
+    RpcController rpc;
+    SchemaBuilder builder(*tablet_replica_->tablet()->schema());
+    ASSERT_OK(builder.RemoveColumn("test_column"));
+
+    Schema s2 = builder.Build();
+
+    req.set_dest_uuid(mini_server_->server()->fs_manager()->uuid());
+    req.set_tablet_id(kTabletId);
+    req.set_schema_version(4);
+    ASSERT_OK(SchemaToPB(s2, req.mutable_schema()));
+
+    {
+      SCOPED_TRACE(SecureDebugString(req));
+      ASSERT_OK(admin_proxy_->AlterSchema(req, &resp, &rpc));
+      SCOPED_TRACE(SecureDebugString(resp));
+      ASSERT_FALSE(resp.has_error());
+    }
+  }
+
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_alter_4");
+
+  InsertTestRowsDirect(kStartRow + 3 * kNumRows, kNumRows);
+
+  timestamps.emplace_back(tablet_replica_->clock()->Now(), "after_inserts_3");
+
+  auto test_diff = [&](pair<Timestamp, std::string> before,
+                       pair<Timestamp, std::string> after) {
+    std::cout << "----------------------------------------" << std::endl; 
+    std::cout << "Testing diff scan from " << before.second
+              << " to " << after.second << std::endl;
+    ScanRequestPB req;
+    ScanResponsePB resp;
+    RpcController rpc;
+
+     SchemaBuilder builder(*tablet_replica_->tablet()->schema());
+    const bool kIsDeletedDefault = false;
+    ASSERT_OK(builder.AddColumn(ColumnSchemaBuilder()
+                              .name("is_deleted")
+                              .type(IS_DELETED)
+                              .read_default(&kIsDeletedDefault)));
+      Schema projection = builder.BuildWithoutIds();
+
+    // Start scan.
+    auto* new_scan = req.mutable_new_scan_request();
+    new_scan->set_tablet_id(kTabletId);
+    ASSERT_OK(SchemaToColumnPBs(projection, new_scan->mutable_projected_columns()));
+    new_scan->set_read_mode(READ_AT_SNAPSHOT);
+    new_scan->set_order_mode(ORDERED);
+    new_scan->set_snap_start_timestamp(before.first.ToUint64());
+    new_scan->set_snap_timestamp(after.first.ToUint64());
+
+    int call_seq_id = 0;
+    req.set_call_seq_id(call_seq_id);
+    req.set_batch_size_bytes(0); // So it won't return data right away.
+    ASSERT_OK(proxy_->Scan(req, &resp, &rpc));
+    std::cout << SecureDebugString(resp);
+
+
+
+    // Consume the scan results and validate that the values are as expected.
+    req.clear_new_scan_request();
+    req.set_scanner_id(resp.scanner_id());
+
+    vector<string> results;
+    while (resp.has_more_results()) {
+      rpc.Reset();
+      req.set_call_seq_id(++call_seq_id);
+      std::cout << SecureDebugString(req) << std::endl;
+      ASSERT_OK(proxy_->Scan(req, &resp, &rpc));
+      std::cout << SecureDebugString(req) << std::endl;
+      NO_FATALS(StringifyRowsFromResponse(projection, rpc, &resp, &results));
+    }
+    
+    for (const auto& entry : results) {
+      std::cout << entry << std::endl;
+    }
+
+
+    return;
+
+  };
+
+  for (size_t i = 0; i + 1 < timestamps.size(); i+=100) {
+    for (size_t j = timestamps.size() - 1; j < timestamps.size(); j++) {
+      test_diff(timestamps[i], timestamps[j]);
+    }
+  }
+  
+  // ===========================
+  // ===========================
+  // ===========================
+  return;
+
+  // // Structure: key -> {val, is_deleted}
+  // map<int32_t, pair<int32_t, bool>> expected;
+
+  // vector<int32_t> keys;
+  // keys.reserve(kNumRows);
+  // for (int32_t i = 0; i < kNumRows; i++) {
+  //   keys.emplace_back(i);
+  // }
+
+  // // Update some random rows.
+  // LocalTabletWriter writer(tablet_replica_->tablet(), &schema_);
+  // std::mt19937 gen(SeedRandom());
+  // std::shuffle(keys.begin(), keys.end(), gen);
+  // for (int i = 0; i < kNumToUpdate; i++) {
+  //   KuduPartialRow row(&schema_);
+  //   int32_t key = keys[i];
+  //   CHECK_OK(row.SetInt32(0, key));
+  //   int32_t new_val = key * 3;
+  //   CHECK_OK(row.SetInt32(1, new_val));
+  //   InsertOrDie(&expected, key, pair<int32_t, bool>(new_val, false));
+  //   CHECK_OK(writer.Update(row));
+  // }
+
+  // // Delete some random rows.
+  // std::shuffle(keys.begin(), keys.end(), gen);
+  // for (int i = 0; i < kNumToDelete; i++) {
+  //   KuduPartialRow row(&schema_);
+  //   int32_t key = keys[i];
+  //   CHECK_OK(row.SetInt32(0, key));
+  //   EmplaceOrUpdate(&expected, key, pair<int32_t, bool>(0 /* ignored */, true));
+  //   CHECK_OK(writer.Delete(row));
+  // }
+
+  // Timestamp after_mutations = tablet_replica_->clock()->Now();
+
+  // ScanRequestPB req;
+  // ScanResponsePB resp;
+  // RpcController rpc;
+
+  // // Build a projection with an IS_DELETED column.
+  // SchemaBuilder builder(*tablet_replica_->tablet()->schema());
+  // const bool kIsDeletedDefault = false;
+  // ASSERT_OK(builder.AddColumn(ColumnSchemaBuilder()
+  //                             .name("is_deleted")
+  //                             .type(IS_DELETED)
+  //                             .read_default(&kIsDeletedDefault)));
+  // Schema projection = builder.BuildWithoutIds();
+
+  // // Start scan.
+  // auto* new_scan = req.mutable_new_scan_request();
+  // new_scan->set_tablet_id(kTabletId);
+  // ASSERT_OK(SchemaToColumnPBs(projection, new_scan->mutable_projected_columns()));
+  // new_scan->set_read_mode(READ_AT_SNAPSHOT);
+  // new_scan->set_order_mode(ORDERED);
+  // new_scan->set_snap_start_timestamp(before_mutations.ToUint64());
+  // new_scan->set_snap_timestamp(after_mutations.ToUint64());
+
+  // int call_seq_id = 0;
+  // {
+  //   req.set_call_seq_id(call_seq_id);
+  //   req.set_batch_size_bytes(0); // So it won't return data right away.
+  //   SCOPED_TRACE(SecureDebugString(req));
+  //   ASSERT_OK(proxy_->Scan(req, &resp, &rpc));
+  //   SCOPED_TRACE(SecureDebugString(resp));
+  //   ASSERT_FALSE(resp.has_error());
+  //   ASSERT_EQ(0, resp.data().num_rows());
+  // }
+
+  // // Consume the scan results and validate that the values are as expected.
+  // req.clear_new_scan_request();
+  // req.set_scanner_id(resp.scanner_id());
+
+  // vector<string> results;
+  // while (resp.has_more_results()) {
+  //   rpc.Reset();
+  //   req.set_call_seq_id(++call_seq_id);
+  //   SCOPED_TRACE(SecureDebugString(req));
+  //   ASSERT_OK(proxy_->Scan(req, &resp, &rpc));
+  //   SCOPED_TRACE(SecureDebugString(resp));
+  //   ASSERT_FALSE(resp.has_error());
+  //   NO_FATALS(StringifyRowsFromResponse(projection, rpc, &resp, &results));
+  // }
+
+  // // Verify that the scan results match what we expected.
+  // ASSERT_EQ(expected.size(), results.size());
+  // int i = 0;
+  // for (const auto& entry : expected) {
+  //   int32_t key = entry.first;
+  //   int32_t val = entry.second.first;
+  //   bool is_deleted = entry.second.second;
+  //   string val_str = Substitute("$0", val);
+  //   if (is_deleted) {
+  //     val_str = ".*"; // Match any value on deleted values.
+  //   }
+  //   ASSERT_STR_MATCHES(results[i++],
+  //       Substitute("^\\(int32 key=$0, int32 int_val=$1, string string_val=\"hello $0\", "
+  //                  "is_deleted is_deleted=$2\\)$$", key, val_str, is_deleted));
+  // }
+
+  // AlterSchemaRequestPB req;
+  // AlterSchemaResponsePB resp;
+  // RpcController rpc;
+
+  // InsertTestRowsRemote(0, 2);
+
+  // // Add one column with a default value
+  // const int32_t c2_write_default = 5;
+  // const int32_t c2_read_default = 7;
+  // SchemaBuilder builder(schema_);
+  // ASSERT_OK(builder.AddColumn(ColumnSchemaBuilder()
+  //                             .name("c2")
+  //                             .type(INT32)
+  //                             .read_default(&c2_read_default)
+  //                             .write_default(&c2_write_default)));
+  // Schema s2 = builder.Build();
+
+  // req.set_dest_uuid(mini_server_->server()->fs_manager()->uuid());
+  // req.set_tablet_id(kTabletId);
+  // req.set_schema_version(1);
+  // ASSERT_OK(SchemaToPB(s2, req.mutable_schema()));
+
+  // // Send the call
+  // {
+  //   SCOPED_TRACE(SecureDebugString(req));
+  //   ASSERT_OK(admin_proxy_->AlterSchema(req, &resp, &rpc));
+  //   SCOPED_TRACE(SecureDebugString(resp));
+  //   ASSERT_FALSE(resp.has_error());
+  // }
+
+  // {
+  //   InsertTestRowsRemote(2, 2);
+  //   scoped_refptr<TabletReplica> tablet;
+  //   ASSERT_TRUE(mini_server_->server()->tablet_manager()->LookupTablet(kTabletId, &tablet));
+  //   ASSERT_OK(tablet->tablet()->Flush());
+  // }
+
+  // const Schema projection({ ColumnSchema("key", INT32), (ColumnSchema("c2", INT32)) }, 1);
+
+  // // Try recovering from the original log
+  // ASSERT_OK(ShutdownAndRebuildTablet());
+  // VerifyRows(projection, { KeyValue(0, 7),
+  //                          KeyValue(1, 7),
+  //                          KeyValue(2, 5),
+  //                          KeyValue(3, 5) });
+
+  // // Try recovering from the log generated on recovery
+  // ASSERT_OK(ShutdownAndRebuildTablet());
+  // VerifyRows(projection, { KeyValue(0, 7),
+  //                          KeyValue(1, 7),
+  //                          KeyValue(2, 5),
+  //                          KeyValue(3, 5) });
 }
 
 } // namespace tserver
