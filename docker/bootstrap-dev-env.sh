@@ -62,7 +62,6 @@ if [[ -f "/usr/bin/yum" ]]; then
     openssl-devel \
     patch \
     pkgconfig \
-    redhat-lsb-core \
     rsync \
     sudo \
     unzip \
@@ -75,14 +74,11 @@ if [[ -f "/usr/bin/yum" ]]; then
   fi
 
   if [[ "$OS_MAJOR_VERSION" -ge "8" ]]; then
+    yum install -y perl
     yum groupinstall -y "Development Tools"
-    sudo alternatives --install /usr/bin/python python /usr/bin/python3 1
-    sudo alternatives --set python /usr/bin/python3
+    alternatives --install /usr/bin/python python /usr/bin/python3 1
+    alternatives --set python /usr/bin/python3
   fi
-
-
-  # Get the major version for version specific package logic below.
-  OS_MAJOR_VERSION=$(lsb_release -rs | cut -f1 -d.)
 
   # Install exta impala packages for the impala images. They are nominal in size.
   # --no-install-recommends keeps the install smaller
