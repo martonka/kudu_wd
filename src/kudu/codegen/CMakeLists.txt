@@ -75,6 +75,9 @@ if (APPLE)
     #       paths consistent if that changes in the future.
     set(PREFIXED_IR_INCLUDES ${PREFIXED_IR_INCLUDES}
       -isystem "${THIRDPARTY_INSTALL_TSAN_DIR}/include/c++/v1")
+  elseif (KUDU_USE_ASAN)
+    set(PREFIXED_IR_INCLUDES ${PREFIXED_IR_INCLUDES}
+      -isystem "${THIRDPARTY_INSTALL_ASAN_DIR}/include/c++/v1")
   else()
     set(PREFIXED_IR_INCLUDES ${PREFIXED_IR_INCLUDES}
       -isystem "${THIRDPARTY_INSTALL_UNINSTRUMENTED_DIR}/include/c++/v1")

@@ -100,6 +100,7 @@ set(THIRDPARTY_INSTALL_DIR ${THIRDPARTY_DIR}/installed)
 set(THIRDPARTY_INSTALL_COMMON_DIR ${THIRDPARTY_INSTALL_DIR}/common)
 set(THIRDPARTY_INSTALL_UNINSTRUMENTED_DIR ${THIRDPARTY_INSTALL_DIR}/uninstrumented)
 set(THIRDPARTY_INSTALL_TSAN_DIR ${THIRDPARTY_INSTALL_DIR}/tsan)
+set(THIRDPARTY_INSTALL_ASAN_DIR ${THIRDPARTY_INSTALL_DIR}/asan)
 
 # Set the Java directory so our C++ tests are able to access its contents.
 # This can be useful to, e.g. spawn a Java subprocess.
@@ -432,6 +433,17 @@ if (${KUDU_USE_ASAN})
 
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -DADDRESS_SANITIZER")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DLEAK_SANITIZER")
+
+  # Disables using the precompiled template specializations for std::string, shared_ptr, etc
+  # so that the annotations in the header actually take effect.
+  add_definitions("-D_GLIBCXX_EXTERN_TEMPLATE=0")
+
+  # Compile and link against the thirdparty TSAN instrumented libstdcxx.
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,${THIRDPARTY_INSTALL_ASAN_DIR}/lib")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -nostdinc++")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -L${THIRDPARTY_INSTALL_ASAN_DIR}/lib")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem ${THIRDPARTY_INSTALL_ASAN_DIR}/include/c++/v1")
 endif()
 
 if (${KUDU_USE_XRAY})
@@ -1010,8 +1022,12 @@ function(ADD_THIRDPARTY_LIB LIB_NAME)
   endif()
 endfunction()
 
-if (${KUDU_USE_TSAN})
-  set(THIRDPARTY_INSTALL_CURRENT_DIR ${THIRDPARTY_INSTALL_DIR}/tsan)
+if (KUDU_USE_ASAN)
+  set(THIRDPARTY_INSTALL_CURRENT_DIR
+      ${THIRDPARTY_INSTALL_DIR}/asan)
+elseif (KUDU_USE_TSAN)
+  set(THIRDPARTY_INSTALL_CURRENT_DIR
+      ${THIRDPARTY_INSTALL_DIR}/tsan)
 else()
   set(THIRDPARTY_INSTALL_CURRENT_DIR ${THIRDPARTY_INSTALL_DIR}/uninstrumented)
 endif()

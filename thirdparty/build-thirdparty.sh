@@ -132,7 +132,7 @@ finish() {
   exit 0
 }
 
-for PREFIX_DIR in $PREFIX_COMMON $PREFIX_DEPS $PREFIX_DEPS_TSAN; do
+for PREFIX_DIR in $PREFIX_COMMON $PREFIX_DEPS $PREFIX_DEPS_TSAN $PREFIX_DEPS_ASAN; do
   mkdir -p $PREFIX_DIR/include
 
   # PREFIX_COMMON is for header-only libraries.
@@ -643,6 +643,147 @@ if [ -n "$F_TSAN" -o -n "$F_JWT_CPP" ]; then
 fi
 
 if [ -n "$F_TSAN" -o -n "$F_ROCKSDB" ]; then
+  build_rocksdb
+fi
+
+restore_env
+save_env
+  export CC=$CLANG
+  export CXX=$CLANGXX
+
+  PREFIX=$PREFIX_DEPS_ASAN
+  MODE_SUFFIX=".asan"
+
+  EXTRA_CFLAGS="-fsanitize=address $EXTRA_CFLAGS"
+  EXTRA_CFLAGS="-fno-omit-frame-pointer $EXTRA_CFLAGS"
+
+# Enable debug symbols so that stacktraces and linenumbers are available at runtime.
+EXTRA_CFLAGS="-g $EXTRA_CFLAGS"
+EXTRA_CXXFLAGS="-g $EXTRA_CXXFLAGS"
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_ZLIB" ]; then
+  build_zlib
+fi
+
+if [ -n "$OS_LINUX" ] && [ -n "$F_UNINSTRUMENTED" -o -n "$F_LIBUNWIND" ]; then
+  build_libunwind
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LZ4" ]; then
+  build_lz4
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_BITSHUFFLE" ]; then
+  build_bitshuffle
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LIBEV" ]; then
+  build_libev
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_SQUEASEL" ]; then
+  build_squeasel
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_CURL" ]; then
+  build_curl
+fi
+
+
+  # Enable debug symbols so that stacktraces and linenumbers are available at runtime.
+  if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
+    build_libcxxabi
+  fi
+save_env
+  if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
+    build_libcxx asan
+  fi
+  # Build the rest of the dependencies against the TSAN-instrumented libc++
+  # instead of the system's C++ standard library.
+  EXTRA_CXXFLAGS="-isystem $PREFIX/include/c++/v1 $EXTRA_CXXFLAGS"
+  EXTRA_LDFLAGS="-L$PREFIX/lib $EXTRA_LDFLAGS"
+  EXTRA_LDFLAGS="-Wl,-rpath,$PREFIX/lib $EXTRA_LDFLAGS"
+
+  # Build the rest of the dependencies with TSAN instrumentation.
+  EXTRA_CFLAGS="-fsanitize=address $EXTRA_CFLAGS"
+  EXTRA_CXXFLAGS="-fsanitize=address $EXTRA_CXXFLAGS"
+  EXTRA_CXXFLAGS="-DADDRES_SANITIZER $EXTRA_CXXFLAGS"
+  if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
+    build_llvm asan 
+  fi
+
+
+EXTRA_CXXFLAGS="-Qunused-arguments -nostdinc++ $EXTRA_CXXFLAGS"
+EXTRA_LDFLAGS="-stdlib=libc++ $EXTRA_LDFLAGS"
+
+# Enable debug symbols so that stacktraces and linenumbers are available at
+# runtime. LLVM is compiled without debug symbols because the LLVM debug symbols
+# take up more than 20GiB of disk space.
+EXTRA_CFLAGS="-g $EXTRA_CFLAGS"
+EXTRA_CXXFLAGS="-g $EXTRA_CXXFLAGS"
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_FLATBUFFERS" ]; then
+  build_flatbuffers
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_PROTOBUF" ]; then
+  build_protobuf
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GFLAGS" ]; then
+  build_gflags
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GLOG" ]; then
+  build_glog
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GMOCK" ]; then
+  build_gmock_gtest
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_SNAPPY" ]; then
+  build_snappy
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_CRCUTIL" ]; then
+  build_crcutil
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_BOOST" ]; then
+  build_boost asan
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_MUSTACHE" ]; then
+  build_mustache
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_BREAKPAD" ]; then
+  build_breakpad
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_THRIFT" ]; then
+  build_thrift
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_YAML" ]; then
+  build_yaml
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GUMBO_PARSER" ]; then
+  # Although it's a C library its tests are written in C++.
+  build_gumbo_parser
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GUMBO_QUERY" ]; then
+  build_gumbo_query
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_JWT_CPP" ]; then
+  build_jwt_cpp
+fi
+
+if [ -n "$F_UNINSTRUMENTED" -o -n "$F_ROCKSDB" ]; then
   build_rocksdb
 fi
 

@@ -144,6 +144,9 @@ build_libcxx() {
     "tsan")
       SANITIZER_ARG="-DLLVM_USE_SANITIZER=Thread"
       ;;
+    "asan")
+      SANITIZER_ARG="-DLLVM_USE_SANITIZER=Address -DLLVM_ENABLE_ASSERTIONS=ON"
+      ;;
     *)
       echo "Unknown build type: $BUILD_TYPE"
       exit 1
@@ -322,6 +325,19 @@ build_llvm() {
 
       # Configure for TSAN.
       TOOLS_ARGS="$TOOLS_ARGS -DLLVM_USE_SANITIZER=Thread"
+      # Use the 'tblgen' from the non-TSAN build when building the TSAN
+      # build, since it runs much faster.
+      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TABLEGEN=$PREFIX_DEPS/bin/llvm-tblgen"
+      ;;
+    "asan")
+      # Build just the core LLVM libraries, dependent on libc++.
+      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_ENABLE_LIBCXX=ON"
+      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_INCLUDE_TOOLS=OFF"
+      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_COMPILER_RT_BUILD=OFF"
+
+      # Configure for ASAN.
+      TOOLS_ARGS="$TOOLS_ARGS  -DLLVM_USE_SANITIZER=Address"
+      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_ENABLE_ASSERTIONS=ON"
       # Use the 'tblgen' from the non-TSAN build when building the TSAN
       # build, since it runs much faster.
       TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TABLEGEN=$PREFIX_DEPS/bin/llvm-tblgen"
@@ -966,6 +982,9 @@ build_boost() {
     "normal")
       ;;
     "tsan")
+      BOOST_LDFLAGS="-stdlib=libc++ $BOOST_LDFLAGS"
+      ;;
+    "asan")
       BOOST_LDFLAGS="-stdlib=libc++ $BOOST_LDFLAGS"
       ;;
     *)
