@@ -74,7 +74,7 @@ if [[ -f "/usr/bin/yum" ]]; then
   fi
 
   if [[ "$OS_MAJOR_VERSION" -ge "8" ]]; then
-    yum install -y perl
+    yum install -y perl python3 python3-pip
     yum groupinstall -y "Development Tools"
     alternatives --install /usr/bin/python python /usr/bin/python3 1
     alternatives --set python /usr/bin/python3
@@ -112,8 +112,11 @@ if [[ -f "/usr/bin/yum" ]]; then
   yum install -y \
     ccache \
     cmake \
-    ninja-build \
     vim
+
+  if ! yum install -y ninja-build; then
+    python3 -m pip install ninja
+  fi
 
   # Install docs build libraries.
   # Note: Uncomment to include in your dev images. These are excluded to reduce image size and build time.
