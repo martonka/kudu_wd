@@ -255,10 +255,11 @@ llvm::Function* MakeProjection(const string& name,
 
 RowProjectorFunctions::RowProjectorFunctions(const Schema& base_schema,
                                              const Schema& projection,
+                                             std::mutex* engine_sync,
                                              ProjectionFunction read_f,
                                              ProjectionFunction write_f,
                                              unique_ptr<JITCodeOwner> owner)
-  : JITWrapper(std::move(owner)),
+  : JITWrapper(engine_sync, std::move(owner)),
     base_schema_(base_schema),
     projection_(projection),
     read_f_(read_f),
@@ -271,35 +272,44 @@ RowProjectorFunctions::RowProjectorFunctions(const Schema& base_schema,
 
 Status RowProjectorFunctions::Create(const Schema& base_schema,
                                      const Schema& projection,
+                                     std::mutex* engine_sync,
                                      scoped_refptr<RowProjectorFunctions>* out,
                                      llvm::TargetMachine** tm) {
-  ModuleBuilder builder;
-  RETURN_NOT_OK(builder.Init());
-
   // Use a no-codegen row projector to check validity and to build
   // the codegen functions.
   kudu::RowProjector no_codegen(&base_schema, &projection);
   RETURN_NOT_OK(no_codegen.Init());
 
-  // Build the functions for code gen. No need to mangle for uniqueness;
-  // in the rare case we have two projectors in one module, LLVM takes
-  // care of uniquifying when making a GlobalValue.
-  Function* read = MakeProjection<true>("ProjRead", &builder, no_codegen);
-  Function* write = MakeProjection<false>("ProjWrite", &builder, no_codegen);
+  {
+    std::lock_guard guard(*engine_sync);
 
-  // Have the ModuleBuilder accept promises to compile the functions
-  ProjectionFunction read_f, write_f;
-  builder.AddJITPromise(read, &read_f);
-  builder.AddJITPromise(write, &write_f);
+    ModuleBuilder builder;
+    RETURN_NOT_OK(builder.Init());
 
-  unique_ptr<JITCodeOwner> owner;
-  RETURN_NOT_OK(builder.Compile(&owner));
+    // Build the functions for code gen. No need to mangle for uniqueness;
+    // in the rare case we have two projectors in one module, LLVM takes
+    // care of uniquifying when making a GlobalValue.
+    Function* read = MakeProjection<true>("ProjRead", &builder, no_codegen);
+    Function* write = MakeProjection<false>("ProjWrite", &builder, no_codegen);
 
-  if (tm) {
-    *tm = builder.GetTargetMachine();
+    // Have the ModuleBuilder accept promises to compile the functions
+    ProjectionFunction read_f, write_f;
+    builder.AddJITPromise(read, &read_f);
+    builder.AddJITPromise(write, &write_f);
+
+    unique_ptr<JITCodeOwner> owner;
+    RETURN_NOT_OK(builder.Compile(engine_sync, &owner));
+
+    if (tm) {
+      *tm = builder.GetTargetMachine();
+    }
+    out->reset(new RowProjectorFunctions(base_schema,
+                                         projection,
+                                         engine_sync,
+                                         read_f,
+                                         write_f,
+                                         std::move(owner)));
   }
-  out->reset(new RowProjectorFunctions(base_schema, projection, read_f,
-                                       write_f, std::move(owner)));
   return Status::OK();
 }
 

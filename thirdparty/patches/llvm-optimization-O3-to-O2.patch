@@ -1,0 +1,17 @@
+--- a/CMakeLists.txt	2026-01-18 22:02:35.865019021 -0800
++++ b/CMakeLists.txt	2026-01-18 22:14:37.045227846 -0800
+@@ -971,9 +971,11 @@
+ include(AddLLVM)
+ include(TableGen)
+ 
+-if( MINGW AND NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" )
+-  # People report that -O3 is unreliable on MinGW. The traditional
+-  # build also uses -O2 for that reason:
++if(NOT "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
++  # Kudu-specifics: -O3 leads to issues on RHEL9.7 with MCJIT-based codegen when
++  # compiled with GCC (e.g., with GCC 11.5.0). Since a proper RCA requires
++  # investing significant amount of time, switch to '-O2' from '-O3'
++  # as a temporary workaround.
+   llvm_replace_compiler_option(CMAKE_CXX_FLAGS_RELEASE "-O3" "-O2")
+ endif()
+ 

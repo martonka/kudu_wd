@@ -1,0 +1,16 @@
+--- a/lib/ExecutionEngine/MCJIT/MCJIT.cpp	2026-01-19 00:57:15.525714487 -0800
++++ b/lib/ExecutionEngine/MCJIT/MCJIT.cpp	2026-01-19 01:03:54.536895474 -0800
+@@ -242,8 +242,12 @@
+   Dyld.resolveRelocations();
+ 
+   // Check for Dyld error.
+-  if (Dyld.hasError())
++  if (Dyld.hasError()) {
+     ErrMsg = Dyld.getErrorString().str();
++    // Bail out if linker reported an error.
++    report_fatal_error(Dyld.getErrorString());
++    return;
++  }
+ 
+   OwnedModules.markAllLoadedModulesAsFinalized();
+ 

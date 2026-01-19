@@ -42,28 +42,10 @@ JITFrameManager::~JITFrameManager() {
   deregisterEHFramesImpl();
 }
 
-uint8_t* JITFrameManager::allocateCodeSection(uintptr_t size,
-                                              unsigned alignment,
-                                              unsigned section_id,
-                                              StringRef section_name) {
-    // Add extra padding for EH frame section: it's zeroed out later upon
-    // registerEHFrames() calls.
-    if (section_name == ".eh_frame") {
-      size += 4;
-    }
-    return SectionMemoryManager::allocateCodeSection(
-        size, alignment, section_id, section_name);
-  }
-
 void JITFrameManager::registerEHFrames(uint8_t* addr,
                                        uint64_t /*load_addr*/,
                                        size_t size) {
   lock_guard guard(kRegistrationMutex);
-
-  // libgcc expects a null-terminated list of FDEs: write 4 zero bytes in the
-  // end of the allocated section.
-  auto* terminator = reinterpret_cast<uint32_t*>(addr + size);
-  *terminator = 0;
 
   __register_frame(addr);
   registered_frames_.push_back(addr);

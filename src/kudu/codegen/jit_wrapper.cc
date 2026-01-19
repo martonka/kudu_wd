@@ -17,6 +17,7 @@
 
 #include "kudu/codegen/jit_wrapper.h"
 
+#include <mutex>
 #include <utility>
 
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
@@ -27,10 +28,14 @@ using std::unique_ptr;
 namespace kudu {
 namespace codegen {
 
-JITWrapper::JITWrapper(unique_ptr<JITCodeOwner> owner)
-  : owner_(std::move(owner)) {}
+JITWrapper::JITWrapper(std::mutex* engine_sync, unique_ptr<JITCodeOwner> owner)
+    : engine_sync_(engine_sync),
+      owner_(std::move(owner)) {}
 
-JITWrapper::~JITWrapper() {}
+JITWrapper::~JITWrapper() {
+  std::lock_guard guard(*engine_sync_);
+  owner_.reset();
+}
 
 } // namespace codegen
 } // namespace kudu

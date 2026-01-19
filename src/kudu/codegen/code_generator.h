@@ -18,6 +18,8 @@
 #ifndef KUDU_CODEGEN_CODE_GENERATOR_H
 #define KUDU_CODEGEN_CODE_GENERATOR_H
 
+#include <mutex>
+
 #include "kudu/gutil/macros.h"
 #include "kudu/util/status.h"
 
@@ -69,6 +71,9 @@ class CodeGenerator {
 
  private:
   static void GlobalInit();
+
+  // TODO(aserbin): document this
+  std::mutex mutex_;
 
   // TODO static ObjectCache shared b/w engines
 

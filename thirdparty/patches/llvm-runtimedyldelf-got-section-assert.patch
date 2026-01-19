@@ -1,0 +1,12 @@
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2026-01-13 22:44:31.960044226 -0800
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2026-01-13 22:45:14.940460911 -0800
+@@ -2179,6 +2179,9 @@
+ uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned no) {
+   if (GOTSectionID == 0) {
+     GOTSectionID = Sections.size();
++    if (GOTSectionID == 0) {
++      abort();
++    }
+     // Reserve a section id. We'll allocate the section later
+     // once we know the total size
+     Sections.push_back(SectionEntry(".got", nullptr, 0, 0, 0));

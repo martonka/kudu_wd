@@ -1,0 +1,419 @@
+commit d58c7a92380e030af6e6f82ce55bc14a919f39ea
+Author: Moritz Sichert <sichert@in.tum.de>
+Date:   Wed May 26 10:50:15 2021 +0200
+
+    [IR] Added operator delete to subclasses of User to avoid UB
+    
+    Several subclasses of User override operator new without also overriding
+    operator delete. This means that delete expressions fall back to using
+    operator delete of the base class, which would be User. However, this is
+    only allowed if the base class has a virtual destructor which is not the
+    case for User, so this is UB.
+    
+    See also [expr.delete] (3) for the exact wording.
+    
+    This is actually detected in some cases by GCC 11's
+    -Wmismatched-new-delete now which is how I found this error.
+    
+    Differential Revision: https://reviews.llvm.org/D103143
+
+diff --git a/include/llvm/Analysis/MemorySSA.h b/include/llvm/Analysis/MemorySSA.h
+index a26115aa82f1..f40b99968fd3 100644
+--- a/include/llvm/Analysis/MemorySSA.h
++++ b/include/llvm/Analysis/MemorySSA.h
+@@ -329,7 +329,8 @@ public:
+                        /*NumOperands=*/1) {}
+ 
+   // allocate space for exactly one operand
+-  void *operator new(size_t s) { return User::operator new(s, 1); }
++  void *operator new(size_t S) { return User::operator new(S, 1); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   static bool classof(const Value *MA) {
+     return MA->getValueID() == MemoryUseVal;
+@@ -389,7 +390,8 @@ public:
+         ID(Ver) {}
+ 
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) { return User::operator new(s, 2); }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   static bool classof(const Value *MA) {
+     return MA->getValueID() == MemoryDefVal;
+@@ -484,9 +486,11 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MemoryUseOrDef, MemoryAccess)
+ /// issue.
+ class MemoryPhi final : public MemoryAccess {
+   // allocate space for exactly zero operands
+-  void *operator new(size_t s) { return User::operator new(s); }
++  void *operator new(size_t S) { return User::operator new(S); }
+ 
+ public:
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
++
+   /// Provide fast operand accessors
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(MemoryAccess);
+ 
+diff --git a/include/llvm/IR/Constants.h b/include/llvm/IR/Constants.h
+index 07d8e9ab5bb6..142dc2187450 100644
+--- a/include/llvm/IR/Constants.h
++++ b/include/llvm/IR/Constants.h
+@@ -58,9 +58,11 @@ class ConstantData : public Constant {
+ protected:
+   explicit ConstantData(Type *Ty, ValueTy VT) : Constant(Ty, VT, nullptr, 0) {}
+ 
+-  void *operator new(size_t s) { return User::operator new(s, 0); }
++  void *operator new(size_t S) { return User::operator new(S, 0); }
+ 
+ public:
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
++
+   ConstantData(const ConstantData &) = delete;
+ 
+   /// Methods to support type inquiry through isa, cast, and dyn_cast.
+@@ -849,12 +851,14 @@ class BlockAddress final : public Constant {
+ 
+   BlockAddress(Function *F, BasicBlock *BB);
+ 
+-  void *operator new(size_t s) { return User::operator new(s, 2); }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
+ 
+   void destroyConstantImpl();
+   Value *handleOperandChangeImpl(Value *From, Value *To);
+ 
+ public:
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
++
+   /// Return a BlockAddress for the specified function and basic block.
+   static BlockAddress *get(Function *F, BasicBlock *BB);
+ 
+diff --git a/include/llvm/IR/GlobalIndirectSymbol.h b/include/llvm/IR/GlobalIndirectSymbol.h
+index d996237aa3ef..e45c7529885d 100644
+--- a/include/llvm/IR/GlobalIndirectSymbol.h
++++ b/include/llvm/IR/GlobalIndirectSymbol.h
+@@ -35,9 +35,8 @@ public:
+   GlobalIndirectSymbol &operator=(const GlobalIndirectSymbol &) = delete;
+ 
+   // allocate space for exactly one operand
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 1);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 1); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Provide fast operand accessors
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Constant);
+diff --git a/include/llvm/IR/InstrTypes.h b/include/llvm/IR/InstrTypes.h
+index 0e372d1cc879..2f31db0fa4d7 100644
+--- a/include/llvm/IR/InstrTypes.h
++++ b/include/llvm/IR/InstrTypes.h
+@@ -68,9 +68,8 @@ protected:
+ 
+ public:
+   // allocate space for exactly one operand
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 1);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 1); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -203,9 +202,8 @@ protected:
+ 
+ public:
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -769,9 +767,8 @@ protected:
+ 
+ public:
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Construct a compare instruction, given the opcode, the predicate and
+   /// the two operands.  Optionally (if InstBefore is specified) insert the
+diff --git a/include/llvm/IR/Instructions.h b/include/llvm/IR/Instructions.h
+index 5de72de77f83..e48a14f4b5b4 100644
+--- a/include/llvm/IR/Instructions.h
++++ b/include/llvm/IR/Instructions.h
+@@ -333,9 +333,8 @@ public:
+             AtomicOrdering Order, SyncScope::ID SSID, BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Return true if this is a store to a volatile memory location.
+   bool isVolatile() const { return getSubclassData<VolatileField>(); }
+@@ -463,9 +462,8 @@ public:
+             BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly zero operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 0);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 0); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Returns the ordering constraint of this fence instruction.
+   AtomicOrdering getOrdering() const {
+@@ -547,9 +545,8 @@ public:
+                     BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly three operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 3);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 3); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   using VolatileField = BoolBitfieldElementT<0>;
+   using WeakField = BoolBitfieldElementT<VolatileField::NextBit>;
+@@ -792,9 +789,8 @@ public:
+                 BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   using VolatileField = BoolBitfieldElementT<0>;
+   using AtomicOrderingField =
+@@ -2040,7 +2036,8 @@ public:
+   ShuffleVectorInst(Value *V1, Value *V2, ArrayRef<int> Mask,
+                     const Twine &NameStr, BasicBlock *InsertAtEnd);
+ 
+-  void *operator new(size_t s) { return User::operator new(s, 2); }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { return User::operator delete(Ptr); }
+ 
+   /// Swap the operands and adjust the mask to preserve the semantics
+   /// of the instruction.
+@@ -2497,9 +2494,8 @@ protected:
+ 
+ public:
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   static InsertValueInst *Create(Value *Agg, Value *Val,
+                                  ArrayRef<unsigned> Idxs,
+@@ -2875,9 +2871,7 @@ private:
+                           const Twine &NameStr, BasicBlock *InsertAtEnd);
+ 
+   // Allocate space for exactly zero operands.
+-  void *operator new(size_t s) {
+-    return User::operator new(s);
+-  }
++  void *operator new(size_t S) { return User::operator new(S); }
+ 
+   void growOperands(unsigned Size);
+   void init(unsigned NumReservedValues, const Twine &NameStr);
+@@ -2889,6 +2883,8 @@ protected:
+   LandingPadInst *cloneImpl() const;
+ 
+ public:
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
++
+   /// Constructors - NumReservedClauses is a hint for the number of incoming
+   /// clauses that this landingpad will have (use 0 if you really have no idea).
+   static LandingPadInst *Create(Type *RetTy, unsigned NumReservedClauses,
+@@ -3207,9 +3203,7 @@ class SwitchInst : public Instruction {
+              BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly zero operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s);
+-  }
++  void *operator new(size_t S) { return User::operator new(S); }
+ 
+   void init(Value *Value, BasicBlock *Default, unsigned NumReserved);
+   void growOperands();
+@@ -3221,6 +3215,8 @@ protected:
+   SwitchInst *cloneImpl() const;
+ 
+ public:
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
++
+   // -2
+   static const unsigned DefaultPseudoIndex = static_cast<unsigned>(~0L-1);
+ 
+@@ -3605,9 +3601,7 @@ class IndirectBrInst : public Instruction {
+   IndirectBrInst(Value *Address, unsigned NumDests, BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly zero operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s);
+-  }
++  void *operator new(size_t S) { return User::operator new(S); }
+ 
+   void init(Value *Address, unsigned NumDests);
+   void growOperands();
+@@ -3619,6 +3613,8 @@ protected:
+   IndirectBrInst *cloneImpl() const;
+ 
+ public:
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
++
+   /// Iterator type that casts an operand to a basic block.
+   ///
+   /// This only makes sense because the successors are stored as adjacent
+@@ -4256,7 +4252,7 @@ class CatchSwitchInst : public Instruction {
+                   BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly zero operands
+-  void *operator new(size_t s) { return User::operator new(s); }
++  void *operator new(size_t S) { return User::operator new(S); }
+ 
+   void init(Value *ParentPad, BasicBlock *UnwindDest, unsigned NumReserved);
+   void growOperands(unsigned Size);
+@@ -4268,6 +4264,8 @@ protected:
+   CatchSwitchInst *cloneImpl() const;
+ 
+ public:
++  void operator delete(void *Ptr) { return User::operator delete(Ptr); }
++
+   static CatchSwitchInst *Create(Value *ParentPad, BasicBlock *UnwindDest,
+                                  unsigned NumHandlers,
+                                  const Twine &NameStr = "",
+@@ -4696,9 +4694,8 @@ public:
+   explicit UnreachableInst(LLVMContext &C, BasicBlock *InsertAtEnd);
+ 
+   // allocate space for exactly zero operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 0);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 0); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   unsigned getNumSuccessors() const { return 0; }
+ 
+diff --git a/lib/IR/ConstantsContext.h b/lib/IR/ConstantsContext.h
+index 7fc25a8944e6..4056c5748081 100644
+--- a/lib/IR/ConstantsContext.h
++++ b/lib/IR/ConstantsContext.h
+@@ -51,9 +51,8 @@ public:
+   }
+ 
+   // allocate space for exactly one operand
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 1);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 1); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+ 
+@@ -79,9 +78,8 @@ public:
+   }
+ 
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -106,9 +104,8 @@ public:
+   }
+ 
+   // allocate space for exactly three operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 3);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 3); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -134,9 +131,8 @@ public:
+   }
+ 
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -163,9 +159,8 @@ public:
+   }
+ 
+   // allocate space for exactly three operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 3);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 3); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -200,7 +195,8 @@ public:
+   SmallVector<int, 4> ShuffleMask;
+   Constant *ShuffleMaskForBitcode;
+ 
+-  void *operator new(size_t s) { return User::operator new(s, 2); }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { return User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+@@ -226,9 +222,8 @@ public:
+   }
+ 
+   // allocate space for exactly one operand
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 1);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 1); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Indices - These identify which value to extract.
+   const SmallVector<unsigned, 4> Indices;
+@@ -258,9 +253,8 @@ public:
+   }
+ 
+   // allocate space for exactly one operand
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+ 
+   /// Indices - These identify the position for the insertion.
+   const SmallVector<unsigned, 4> Indices;
+@@ -323,9 +317,8 @@ public:
+   }
+ 
+   // allocate space for exactly two operands
+-  void *operator new(size_t s) {
+-    return User::operator new(s, 2);
+-  }
++  void *operator new(size_t S) { return User::operator new(S, 2); }
++  void operator delete(void *Ptr) { return User::operator delete(Ptr); }
+ 
+   /// Transparently provide more efficient getOperand methods.
+   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);

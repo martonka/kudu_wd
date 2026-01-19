@@ -221,7 +221,7 @@ Status CodeGenerator::CompileRowProjector(const Schema& base, const Schema& proj
   RETURN_NOT_OK(CheckCodegenEnabled());
 
   TargetMachine* tm;
-  RETURN_NOT_OK(RowProjectorFunctions::Create(base, proj, out, &tm));
+  RETURN_NOT_OK(RowProjectorFunctions::Create(base, proj, &mutex_, out, &tm));
 
   if (FLAGS_codegen_dump_mc) {
     static const int kInstrMax = 1500;

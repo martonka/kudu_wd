@@ -63,6 +63,7 @@
 #include "kudu/codegen/precompiled.ll.h"
 #include "kudu/gutil/basictypes.h"
 #include "kudu/gutil/map-util.h"
+#include "kudu/gutil/port.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/status.h"
 
@@ -321,7 +322,8 @@ vector<string> GetHostCPUAttrs() {
 
 } // anonymous namespace
 
-Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
+Status ModuleBuilder::Compile(std::mutex* engine_sync,
+                              unique_ptr<ExecutionEngine>* out) {
   CHECK_EQ(state_, kBuilding);
 
   // Attempt to generate the engine
@@ -345,6 +347,7 @@ Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
                                       "Could not start ExecutionEngine",
                                       str);
   }
+
   module->setDataLayout(target_->createDataLayout());
 
   DoOptimizations(module, GetFunctionNames());
@@ -352,6 +355,9 @@ Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
 
   // Compile the module
   local_engine->finalizeObject();
+  if (PREDICT_FALSE(local_engine->hasError())) {
+    return Status::RuntimeError("MCJIT error", local_engine->getErrorMessage());
+  }
 
   // Satisfy the promises
   for (JITFuture& fut : futures_) {

@@ -383,6 +383,10 @@ if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
   build_libcxx normal
 fi
 
+#if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
+#  build_compiler_rt normal
+#fi
+
 if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GFLAGS" ]; then
   build_gflags
 fi
@@ -546,6 +550,10 @@ save_env
 if [ -n "$F_TSAN" -o -n "$F_LLVM" ]; then
   build_libcxx tsan
 fi
+
+#if [ -n "$F_TSAN" -o -n "$F_LLVM" ]; then
+#  build_compiler_rt tsan
+#fi
 
 # Build the rest of the dependencies against the TSAN-instrumented libc++
 # instead of the system's C++ standard library.

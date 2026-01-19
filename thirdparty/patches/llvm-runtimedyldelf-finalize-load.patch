@@ -1,0 +1,24 @@
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2026-01-12 16:00:24
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2026-01-12 16:02:23
+@@ -1905,14 +1905,15 @@
+ 
+     StringRef Name;
+     Expected<StringRef> NameOrErr = Section.getName();
+-    if (NameOrErr)
++    if (NameOrErr) {
+       Name = *NameOrErr;
+-    else
++      const unsigned int idx = i->second;
++      if (Name == ".eh_frame" && idx != AbsoluteSymbolSection) {
++        UnregisteredEHFrameSections.push_back(idx);
++        break;
++      }
++    } else {
+       consumeError(NameOrErr.takeError());
+-
+-    if (Name == ".eh_frame") {
+-      UnregisteredEHFrameSections.push_back(i->second);
+-      break;
+     }
+   }
+ 

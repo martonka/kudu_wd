@@ -1,0 +1,11 @@
+--- runtimes/CMakeLists.txt.orig	2026-01-14 19:47:02.743660689 -0800
++++ runtimes//CMakeLists.txt	2026-01-14 19:48:23.623410957 -0800
+@@ -27,7 +27,7 @@
+   set(LLVM_ENABLE_RUNTIMES ${LLVM_ALL_RUNTIMES})
+ endif()
+ foreach(proj ${LLVM_ENABLE_RUNTIMES})
+-  set(proj_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../${proj}")
++  set(proj_dir "${CMAKE_CURRENT_SOURCE_DIR}/../projects/${proj}")
+   if(IS_DIRECTORY ${proj_dir} AND EXISTS ${proj_dir}/CMakeLists.txt)
+     list(APPEND runtimes ${proj_dir})
+   else()

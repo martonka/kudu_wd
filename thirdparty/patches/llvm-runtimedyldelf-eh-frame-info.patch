@@ -1,0 +1,70 @@
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.h  2026-01-12 11:56:48
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.h	2026-01-12 12:27:08
+@@ -145,6 +145,19 @@
+   DenseMap<SID, SID> SectionToGOTMap;
+ 
+ private:
++  struct EHFrameInfo {
++    uint64_t Addr;
++    uint64_t LoadAddr;
++    size_t Size;
++
++    EHFrameInfo()
++        : Addr(0), LoadAddr(0), Size(0) {}
++
++    EHFrameInfo(uint64_t addr, uint64_t load_addr, size_t size)
++        : Addr(addr), LoadAddr(load_addr), Size(size) {
++    }
++  };
++
+   // A map to avoid duplicate got entries (Mips64 specific)
+   StringMap<uint64_t> GOTSymbolOffsets;
+ 
+@@ -155,7 +161,7 @@
+   // When a module is loaded we save the SectionID of the EH frame section
+   // in a table until we receive a request to register all unregistered
+   // EH frame sections with the memory manager.
+-  std::vector<SID> UnregisteredEHFrameSections;
++  std::vector<EHFrameInfo> UnregisteredEHFrameSections;
+ 
+   // Map between GOT relocation value and corresponding GOT offset
+   std::map<RelocationValueRef, uint64_t> GOTOffsetMap;
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2026-01-12 12:17:12
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2026-01-12 12:24:12
+@@ -226,12 +226,8 @@
+ RuntimeDyldELF::~RuntimeDyldELF() {}
+ 
+ void RuntimeDyldELF::registerEHFrames() {
+-  for (int i = 0, e = UnregisteredEHFrameSections.size(); i != e; ++i) {
+-    SID EHFrameSID = UnregisteredEHFrameSections[i];
+-    uint8_t *EHFrameAddr = Sections[EHFrameSID].getAddress();
+-    uint64_t EHFrameLoadAddr = Sections[EHFrameSID].getLoadAddress();
+-    size_t EHFrameSize = Sections[EHFrameSID].getSize();
+-    MemMgr.registerEHFrames(EHFrameAddr, EHFrameLoadAddr, EHFrameSize);
++  for (const auto& SI : UnregisteredEHFrameSections) {
++    MemMgr.registerEHFrames(reinterpret_cast<uint8_t*>(SI.Addr), SI.LoadAddr, SI.Size);
+   }
+   UnregisteredEHFrameSections.clear();
+ }
+@@ -1905,14 +1901,15 @@
+ 
+     StringRef Name;
+     Expected<StringRef> NameOrErr = Section.getName();
+-    if (NameOrErr)
++    if (NameOrErr) {
+       Name = *NameOrErr;
+-    else
++      if (Name == ".eh_frame") {
++        UnregisteredEHFrameSections.emplace_back(
++            Section.getAddress(), Section.getAddress(), Section.getSize());
++        break;
++      }
++    } else {
+       consumeError(NameOrErr.takeError());
+-
+-    if (Name == ".eh_frame") {
+-      UnregisteredEHFrameSections.push_back(i->second);
+-      break;
+     }
+   }
+ 

@@ -1,0 +1,22 @@
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyld.cpp	2026-01-13 16:47:04
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyld.cpp	2026-01-13 16:48:00
+@@ -749,6 +749,9 @@
+   if (!Addr)
+     report_fatal_error("Unable to allocate memory for common symbols!");
+   uint64_t Offset = 0;
++  if (reinterpret_cast<uintptr_t>(Addr) == 0xbebebebebebebebe) {
++    abort();
++  }
+   Sections.push_back(
+       SectionEntry("<common symbols>", Addr, CommonSize, CommonSize, 0));
+   memset(Addr, 0, CommonSize);
+@@ -907,6 +910,9 @@
+                << " Allocate: " << Allocate << "\n");
+   }
+ 
++  if (reinterpret_cast<uintptr_t>(Addr) == 0xbebebebebebebebe) {
++    abort();
++  }
+   Sections.push_back(
+       SectionEntry(Name, Addr, DataSize, Allocate, (uintptr_t)pData));
+ 

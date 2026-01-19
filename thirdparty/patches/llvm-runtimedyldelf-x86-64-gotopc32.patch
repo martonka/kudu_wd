@@ -1,0 +1,27 @@
+commit f6873786034ab752a50539badc0ce57ac11dda6c
+Author: Moritz Sichert <sichert@in.tum.de>
+Date:   Fri Oct 30 11:36:53 2020 +0100
+
+    [RuntimeDyld] Implemented relocation for ELF::R_X86_64_GOTPC32
+    
+    Differential Revision: https://reviews.llvm.org/D95512
+
+diff --git a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
+index efe0b9cd61cd..6e73c1369453 100644
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
+@@ -1813,10 +1813,13 @@ RuntimeDyldELF::processRelocationRef(
+         addRelocationForSymbol(RE, Value.SymbolName);
+       else
+         addRelocationForSection(RE, Value.SectionID);
+-    } else if (RelType == ELF::R_X86_64_GOTPC64) {
++    } else if (RelType == ELF::R_X86_64_GOTPC32) {
+       // Materialize the address of the base of the GOT relative to the PC.
+       // This doesn't create a GOT entry, but it does mean we need a GOT
+       // section.
++      (void)allocateGOTEntries(0);
++      resolveGOTOffsetRelocation(SectionID, Offset, Addend, ELF::R_X86_64_PC32);
++    } else if (RelType == ELF::R_X86_64_GOTPC64) {
+       (void)allocateGOTEntries(0);
+       resolveGOTOffsetRelocation(SectionID, Offset, Addend, ELF::R_X86_64_PC64);
+     } else if (RelType == ELF::R_X86_64_GOTOFF64) {

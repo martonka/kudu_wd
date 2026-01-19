@@ -55,7 +55,9 @@ class RowProjectorFunctions : public JITWrapper {
   // and projection.
   // Writes the llvm::TargetMachine* used to 'tm' (if not NULL)
   // and the functions to 'out' upon success.
-  static Status Create(const Schema& base_schema, const Schema& projection,
+  static Status Create(const Schema& base_schema,
+                       const Schema& projection,
+                       std::mutex* engine_sync,
                        scoped_refptr<RowProjectorFunctions>* out,
                        llvm::TargetMachine** tm = NULL);
 
@@ -69,8 +71,11 @@ class RowProjectorFunctions : public JITWrapper {
   static Status EncodeKey(const Schema& base, const Schema& proj, faststring* out);
 
  private:
-  RowProjectorFunctions(const Schema& base_schema, const Schema& projection,
-                        ProjectionFunction read_f, ProjectionFunction write_f,
+  RowProjectorFunctions(const Schema& base_schema,
+                        const Schema& projection,
+                        std::mutex* engine_sync,
+                        ProjectionFunction read_f,
+                        ProjectionFunction write_f,
                         std::unique_ptr<JITCodeOwner> owner);
 
   const Schema base_schema_, projection_;

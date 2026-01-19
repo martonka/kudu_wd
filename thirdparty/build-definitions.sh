@@ -124,10 +124,16 @@ build_libcxxabi() {
   pushd $LIBCXXABI_BDIR
   rm -Rf CMakeCache.txt CMakeFiles/
 
+#    -DLLVM_USE_SANITIZER="Address;Undefined" \
+
+#    -DCMAKE_BUILD_TYPE=Debug \
+#    -DCMAKE_CXX_FLAGS="$EXTRA_CXXFLAGS -O1 -g $EXTRA_LDFLAGS" \
+
   cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DCMAKE_CXX_FLAGS="$EXTRA_CXXFLAGS $EXTRA_LDFLAGS" \
+    -DLLVM_ENABLE_ASSERTIONS=ON \
     -DLLVM_PATH=$LLVM_SOURCE \
     $EXTRA_CMAKE_FLAGS \
     $LLVM_SOURCE/projects/libcxxabi
@@ -136,6 +142,7 @@ build_libcxxabi() {
 }
 
 build_libcxx() {
+#      SANITIZER_ARG="-DLLVM_USE_SANITIZER=Address;Undefined"
   local BUILD_TYPE=$1
   case $BUILD_TYPE in
     "normal")
@@ -154,6 +161,13 @@ build_libcxx() {
   mkdir -p $LIBCXX_BDIR
   pushd $LIBCXX_BDIR
   rm -Rf CMakeCache.txt CMakeFiles/
+
+#    -DCMAKE_C_COMPILER=/opt/kudu/bin/clang \
+#    -DCMAKE_CXX_COMPILER=/opt/kudu/bin/clang++ \
+
+#    -DCMAKE_BUILD_TYPE=Debug \
+#    -DCMAKE_CXX_FLAGS="$EXTRA_CXXFLAGS -O1 -g" \
+
   cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
@@ -161,6 +175,7 @@ build_libcxx() {
     -DCMAKE_EXE_LINKER_FLAGS="$EXTRA_LDFLAGS" \
     -DCMAKE_MODULE_LINKER_FLAGS="$EXTRA_LDFLAGS" \
     -DCMAKE_SHARED_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+    -DLLVM_ENABLE_ASSERTIONS=ON \
     -DLLVM_PATH=$LLVM_SOURCE \
     -DLIBCXX_CXX_ABI=libcxxabi \
     -DLIBCXX_CXX_ABI_INCLUDE_PATHS=$LLVM_SOURCE/projects/libcxxabi/include \
@@ -171,6 +186,46 @@ build_libcxx() {
   ${NINJA:-make} -j$PARALLEL $EXTRA_MAKEFLAGS install
   popd
 }
+
+#build_compiler_rt() {
+##      SANITIZER_ARG="-DLLVM_USE_SANITIZER=Address;Undefined"
+#  local BUILD_TYPE=$1
+#  case $BUILD_TYPE in
+#    "normal")
+#      ;;
+#    "tsan")
+#      SANITIZER_ARG="-DLLVM_USE_SANITIZER=Thread"
+#      ;;
+#    *)
+#      echo "Unknown build type: $BUILD_TYPE"
+#      exit 1
+#      ;;
+#  esac
+#
+#  COMPILER_RT_BDIR=$TP_BUILD_DIR/llvm-$LLVM_VERSION.compiler-rt$MODE_SUFFIX
+#  mkdir -p $COMPILER_RT_BDIR
+#  pushd $COMPILER_RT_BDIR
+#  rm -Rf CMakeCache.txt CMakeFiles/
+#  cmake \
+#    -DCMAKE_BUILD_TYPE=Debug \
+#    -DCMAKE_C_COMPILER=/opt/kudu/bin/clang \
+#    -DCMAKE_CXX_COMPILER=/opt/kudu/bin/clang++ \
+#    -DCMAKE_INSTALL_PREFIX=$PREFIX \
+#    -DCMAKE_CXX_FLAGS="$EXTRA_CXXFLAGS" \
+#    -DCMAKE_EXE_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+#    -DCMAKE_MODULE_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+#    -DCMAKE_SHARED_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+#    -DLLVM_PATH=$LLVM_SOURCE \
+#    -DLIBCXX_CXX_ABI=libcxxabi \
+#    -DLIBCXX_CXX_ABI_INCLUDE_PATHS=$LLVM_SOURCE/projects/libcxxabi/include \
+#    -DLIBCXX_CXX_ABI_LIBRARY_PATH=$PREFIX/lib \
+#    -DLLVM_ENABLE_RUNTIMES=compiler-rt \
+#    $SANITIZER_ARG \
+#    $EXTRA_CMAKE_FLAGS \
+#    $LLVM_SOURCE/projects/compiler-rt
+#  ${NINJA:-make} -j$PARALLEL $EXTRA_MAKEFLAGS install
+#  popd
+#}
 
 build_or_find_python() {
   if [ -n "$PYTHON_EXECUTABLE" ]; then
@@ -205,6 +260,7 @@ build_llvm() {
   # Always disabled; these subprojects are built standalone.
   TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_LIBCXX_BUILD=OFF"
   TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_LIBCXXABI_BUILD=OFF"
+#  TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_COMPILER_RT_BUILD=OFF"
 
   # Disable some builds we don't care about.
   for arg in \
@@ -294,6 +350,10 @@ build_llvm() {
       #     unrecognized relocation (0x2a) in section `.text'
       # ...as it tries to use the 'ld' from devtoolset-3 (on the path) to link libraries
       # coming from devtoolset-6.
+
+      #TOOLS_ARGS="$TOOLS_ARGS -DLLVM_USE_SANITIZER=Address;Undefined"
+      #TOOLS_ARGS="$TOOLS_ARGS -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld'"
+      #TOOLS_ARGS="$TOOLS_ARGS -DLLVM_ENABLE_RUNTIMES=compiler-rt"
       GCC_INSTALL_PREFIX=$(gcc -v 2>&1 | grep -o -- '--prefix=[^ ]*' | cut -f2 -d=)
       if [ -n "$GCC_INSTALL_PREFIX" ]; then
         TOOLS_ARGS="$TOOLS_ARGS -DGCC_INSTALL_PREFIX=$GCC_INSTALL_PREFIX"
@@ -347,10 +407,17 @@ build_llvm() {
          $PREFIX/lib/clang/ \
          $PREFIX/lib/cmake/{llvm,clang}
 
+#    -DCMAKE_C_COMPILER=/opt/kudu/bin/clang \
+#    -DCMAKE_CXX_COMPILER=/opt/kudu/bin/clang++ \
+
+#    -DCMAKE_BUILD_TYPE=Debug \
+#    -DCMAKE_CXX_FLAGS="$CLANG_CXXFLAGS -O1 -g" \
+
   cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DLLVM_TEMPORARILY_ALLOW_OLD_TOOLCHAIN=ON \
+    -DLLVM_ENABLE_ASSERTIONS=ON \
     -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
     -DLLVM_INCLUDE_TESTS=OFF \

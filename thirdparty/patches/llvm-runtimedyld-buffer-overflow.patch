@@ -1,0 +1,79 @@
+commit 10038d0b3dfcfa6abf8a710612899f859ef1534b
+Author: Moritz Sichert <sichert@in.tum.de>
+Date:   Fri Oct 30 11:35:12 2020 +0100
+
+    [RuntimeDyld] Fixed buffer overflows with absolute symbols
+    
+    Differential Revision: https://reviews.llvm.org/D95596
+
+diff --git a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyld.cpp b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyld.cpp
+index cd1da2a00164..57c4e9306af3 100644
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyld.cpp
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyld.cpp
+@@ -146,8 +146,8 @@ void RuntimeDyldImpl::resolveLocalRelocations() {
+     // The Section here (Sections[i]) refers to the section in which the
+     // symbol for the relocation is located.  The SectionID in the relocation
+     // entry provides the section to which the relocation will be applied.
+-    int Idx = it->first;
+-    uint64_t Addr = Sections[Idx].getLoadAddress();
++    unsigned Idx = it->first;
++    uint64_t Addr = getSectionLoadAddress(Idx);
+     LLVM_DEBUG(dbgs() << "Resolving relocations Section #" << Idx << "\t"
+                       << format("%p", (uintptr_t)Addr) << "\n");
+     resolveRelocationList(it->second, Addr);
+@@ -1077,7 +1077,8 @@ void RuntimeDyldImpl::resolveRelocationList(const RelocationList &Relocs,
+   for (unsigned i = 0, e = Relocs.size(); i != e; ++i) {
+     const RelocationEntry &RE = Relocs[i];
+     // Ignore relocations for sections that were not loaded
+-    if (Sections[RE.SectionID].getAddress() == nullptr)
++    if (RE.SectionID != AbsoluteSymbolSection &&
++        Sections[RE.SectionID].getAddress() == nullptr)
+       continue;
+     resolveRelocation(RE, Value);
+   }
+diff --git a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldImpl.h b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldImpl.h
+index d34fae9aaf0c..a5bc181f8af9 100644
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldImpl.h
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldImpl.h
+@@ -462,16 +462,26 @@ public:
+   loadObject(const object::ObjectFile &Obj) = 0;
+ 
+   uint64_t getSectionLoadAddress(unsigned SectionID) const {
+-    return Sections[SectionID].getLoadAddress();
++    if (SectionID == AbsoluteSymbolSection)
++      return 0;
++    else
++      return Sections[SectionID].getLoadAddress();
+   }
+ 
+   uint8_t *getSectionAddress(unsigned SectionID) const {
+-    return Sections[SectionID].getAddress();
++    if (SectionID == AbsoluteSymbolSection)
++      return nullptr;
++    else
++      return Sections[SectionID].getAddress();
+   }
+ 
+   StringRef getSectionContent(unsigned SectionID) const {
+-    return StringRef(reinterpret_cast<char *>(Sections[SectionID].getAddress()),
+-                     Sections[SectionID].getStubOffset() + getMaxStubSize());
++    if (SectionID == AbsoluteSymbolSection)
++      return {};
++    else
++      return StringRef(
++          reinterpret_cast<char *>(Sections[SectionID].getAddress()),
++          Sections[SectionID].getStubOffset() + getMaxStubSize());
+   }
+ 
+   uint8_t* getSymbolLocalAddress(StringRef Name) const {
+@@ -519,9 +529,7 @@ public:
+ 
+     for (auto &KV : GlobalSymbolTable) {
+       auto SectionID = KV.second.getSectionID();
+-      uint64_t SectionAddr = 0;
+-      if (SectionID != AbsoluteSymbolSection)
+-        SectionAddr = getSectionLoadAddress(SectionID);
++      uint64_t SectionAddr = getSectionLoadAddress(SectionID);
+       Result[KV.first()] =
+         JITEvaluatedSymbol(SectionAddr + KV.second.getOffset(), KV.second.getFlags());
+     }

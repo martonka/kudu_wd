@@ -1,0 +1,81 @@
+commit 4c1f394c69fec616d73af1f333154eba0a95590f
+Author: Hans Wennborg <hans@chromium.org>
+Date:   Thu Jul 23 11:17:16 2020 +0200
+
+    RuntimeDyldELF: report_fatal_error instead of asserting for unimplemented relocations (PR46816)
+    
+    This fixes the ExecutionEngine/MCJIT/stubs-sm-pic.ll test in no-asserts
+    builds which is set to XFAIL on some platforms like 32-bit x86. More
+    importantly, we probably don't want to silently error in these cases.
+    
+    Differential revision: https://reviews.llvm.org/D84390
+    
+    (cherry picked from commit 6a3b07a4bf14be32569550f2e9814d8797d27d31)
+
+diff --git a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
+index 7c39ddc8b1da..7ed8a718ed3c 100644
+--- a/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
++++ b/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
+@@ -269,7 +269,7 @@ void RuntimeDyldELF::resolveX86_64Relocation(const SectionEntry &Section,
+                                              uint64_t SymOffset) {
+   switch (Type) {
+   default:
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_X86_64_NONE:
+     break;
+@@ -359,7 +359,7 @@ void RuntimeDyldELF::resolveX86Relocation(const SectionEntry &Section,
+   default:
+     // There are other relocation types, but it appears these are the
+     // only ones currently used by the LLVM ELF object writer
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   }
+ }
+@@ -382,7 +382,7 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+ 
+   switch (Type) {
+   default:
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_AARCH64_ABS16: {
+     uint64_t Result = Value + Addend;
+@@ -721,7 +721,7 @@ void RuntimeDyldELF::resolvePPC32Relocation(const SectionEntry &Section,
+   uint8_t *LocalAddress = Section.getAddressWithOffset(Offset);
+   switch (Type) {
+   default:
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_PPC_ADDR16_LO:
+     writeInt16BE(LocalAddress, applyPPClo(Value + Addend));
+@@ -741,7 +741,7 @@ void RuntimeDyldELF::resolvePPC64Relocation(const SectionEntry &Section,
+   uint8_t *LocalAddress = Section.getAddressWithOffset(Offset);
+   switch (Type) {
+   default:
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_PPC64_ADDR16:
+     writeInt16BE(LocalAddress, applyPPClo(Value + Addend));
+@@ -835,7 +835,7 @@ void RuntimeDyldELF::resolveSystemZRelocation(const SectionEntry &Section,
+   uint8_t *LocalAddress = Section.getAddressWithOffset(Offset);
+   switch (Type) {
+   default:
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_390_PC16DBL:
+   case ELF::R_390_PLT16DBL: {
+@@ -890,7 +890,7 @@ void RuntimeDyldELF::resolveBPFRelocation(const SectionEntry &Section,
+ 
+   switch (Type) {
+   default:
+-    llvm_unreachable("Relocation type not implemented yet!");
++    report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_BPF_NONE:
+     break;

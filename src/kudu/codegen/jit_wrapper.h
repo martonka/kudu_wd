@@ -19,6 +19,7 @@
 #define KUDU_CODEGEN_JIT_WRAPPER_H
 
 #include <memory>
+#include <mutex>
 
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/ref_counted.h"
@@ -53,12 +54,14 @@ class JITWrapper : public RefCountedThreadSafe<JITWrapper> {
   };
 
  protected:
-  explicit JITWrapper(std::unique_ptr<JITCodeOwner> owner);
+  explicit JITWrapper(std::mutex* engine_sync,
+                      std::unique_ptr<JITCodeOwner> owner);
   virtual ~JITWrapper();
 
  private:
   friend class RefCountedThreadSafe<JITWrapper>;
 
+  std::mutex* engine_sync_;
   std::unique_ptr<JITCodeOwner> owner_;
 
   DISALLOW_COPY_AND_ASSIGN(JITWrapper);

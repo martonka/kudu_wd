@@ -113,6 +113,8 @@ endforeach()
 set(IR_FLAGS
   -S
   -emit-llvm
+  -fPIC
+  -mcmodel=large
   -DIR_BUILD
   ${CMAKE_CXX_FLAGS}
   ${PREFIXED_IR_PP_DEFS}

@@ -345,7 +345,7 @@ fetch_and_patch \
  $PYTHON_SOURCE \
  $PYTHON_PATCHLEVEL
 
-LLVM_PATCHLEVEL=8
+LLVM_PATCHLEVEL=22
 fetch_and_patch \
  llvm-${LLVM_VERSION}-iwyu-${IWYU_VERSION}.src.tar.gz \
  $LLVM_SOURCE \
@@ -357,6 +357,7 @@ fetch_and_patch \
  "patch -p2 < $TP_DIR/patches/llvm-fix-missing-include.patch" \
  "patch -d projects -p1 < $TP_DIR/patches/llvm-Sanitizer-built-against-glibc-2_34-doesnt-work.patch" \
  "patch -d tools -p1 < $TP_DIR/patches/llvm-ignore-flto-values.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-optimization-O3-to-O2.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-00.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-01.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-02.patch" \
@@ -364,7 +365,20 @@ fetch_and_patch \
  "patch -p1 < $TP_DIR/patches/llvm-is-convertible-00.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-is-convertible-01.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-01.patch"
+ "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-01.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-dangling-reference.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyld-buffer-overflow.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-ir-op-delete-ub-fix.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-got-reset.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyld-absolute-relocations.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-x86-64-gotopc32.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-tls-symbols-relocation.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-finalize-load.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-register-eh-frames.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyld-sections-push-back-assert.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-runtimedyldelf-got-section-assert.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-PassRegistry.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-mcjit-bail-on-error.patch"
 
 LZ4_PATCHLEVEL=0
 fetch_and_patch \

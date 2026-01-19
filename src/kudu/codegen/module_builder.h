@@ -19,6 +19,7 @@
 #define KUDU_CODEGEN_FUNCTION_BUILDER_H
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -110,7 +111,8 @@ class ModuleBuilder {
   // After this method has been called, the jit-compiled code may be
   // called as long as 'out' remains alive. Once 'out' destructs,
   // the code will be freed.
-  Status Compile(std::unique_ptr<llvm::ExecutionEngine>* out);
+  Status Compile(std::mutex* engine_sync,
+                 std::unique_ptr<llvm::ExecutionEngine>* out);
 
   // Retrieves the TargetMachine that the engine builder guessed was
   // the native target. Requires compilation is complete.

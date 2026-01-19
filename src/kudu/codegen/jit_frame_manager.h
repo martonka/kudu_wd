@@ -32,12 +32,6 @@ class JITFrameManager : public llvm::SectionMemoryManager {
   JITFrameManager() = default;
   ~JITFrameManager() override;
 
-  // Override to add space for the 4-byte null terminator.
-  uint8_t* allocateCodeSection(uintptr_t size,
-                               unsigned alignment,
-                               unsigned section_id,
-                               llvm::StringRef section_name) override;
-
   void registerEHFrames(uint8_t* addr, uint64_t load_addr, size_t size) override;
   void deregisterEHFrames() override;
 
