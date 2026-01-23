@@ -391,6 +391,45 @@ static double benchmark(const char *label, Fn &&f, int32_t maxN, int iters) {
   return dt.count();
 }
 
+Status addPrecompiledIRToJIT(LLJIT &jit,
+                             ResourceTrackerSP RT,
+                             ThreadSafeContext &TSC) {
+  // Wrap embedded IR bytes
+  llvm::StringRef ir_data(precompiled_ll_data, precompiled_ll_len);
+  if (ir_data.empty()) {
+    return Status::ConfigurationError("IR not properly linked", "");
+  }
+
+  // Parse IR into a Module using the ThreadSafeContext's LLVMContext
+  llvm::SMDiagnostic diag;
+  auto ir_buf = llvm::MemoryBuffer::getMemBuffer(ir_data, "precompiled.ll",
+                                                 /*RequiresNullTerminator=*/false);
+
+  std::unique_ptr<llvm::Module> M =
+      llvm::parseIR(ir_buf->getMemBufferRef(), diag, *TSC.getContext());
+
+  if (!M) {
+    // Your ToString(err) equivalent: print the diagnostic into a string
+    std::string msg;
+    llvm::raw_string_ostream os(msg);
+    diag.print("precompiled.ll", os);
+    os.flush();
+    return Status::ConfigurationError("Could not parse IR", msg);
+  }
+
+  // Make the module match the JIT's DataLayout (helps avoid surprises)
+  M->setDataLayout(jit.getDataLayout());
+
+  // Add to JIT under the tracker (so you can remove later)
+  ThreadSafeModule TSM(std::move(M), TSC);
+  if (auto Err = jit.addIRModule(RT, std::move(TSM))) {
+    return Status::ConfigurationError("Failed to add embedded IR module",
+                                      llvm::toString(std::move(Err)));
+  }
+
+  return Status::OK();
+}
+
 Status ModuleBuilder::testLLJIT() {
   InitializeNativeTarget();
   InitializeNativeTargetAsmPrinter();
@@ -405,6 +444,11 @@ Status ModuleBuilder::testLLJIT() {
   }
   std::unique_ptr<LLJIT> jit = std::move(*jitExpected);
 
+  auto RT_precompiled = jit->getMainJITDylib().createResourceTracker();
+  addPrecompiledIRToJIT(*jit,
+                        RT_precompiled,
+                        *std::make_unique<ThreadSafeContext>(std::make_unique<LLVMContext>()));
+
   constexpr int32_t Divisor = 7;
 
   // Thread-safe context + module build
@@ -415,10 +459,12 @@ Status ModuleBuilder::testLLJIT() {
   if (!mod) {
     return Status::ConfigurationError("Could not build isDivisible module", "");
   }
-
+  
+  llvm::orc::JITDylib &JD = jit->getMainJITDylib();
+  auto RT = JD.createResourceTracker();
   // Add module to JIT
   ThreadSafeModule tsm(std::move(mod), *tsc);
-  if (auto err = jit->addIRModule(std::move(tsm))) {
+  if (auto err = jit->addIRModule(RT, std::move(tsm))) {
     return Status::ConfigurationError("Failed to add IR module", llvm::toString(std::move(err)));
   }
 
@@ -447,6 +493,11 @@ Status ModuleBuilder::testLLJIT() {
   benchmark("LLJIT isDivisible_7",
             [&](int32_t n) { return isDivisibleJit(n); },
             maxN, iters);
+
+  
+  if (auto err = RT->remove(); err) {
+    return Status::ConfigurationError("Failed to remove JITDylib resources", llvm::toString(std::move(err)));
+  }
 
   return Status::OK();
 }
