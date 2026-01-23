@@ -38,6 +38,7 @@
 
 #include "kudu/codegen/code_generator.h"
 #include "kudu/codegen/compilation_manager.h"
+#include "kudu/codegen/module_builder.h"
 #include "kudu/codegen/row_projector.h"
 #include "kudu/common/common.pb.h"
 #include "kudu/common/row.h"
@@ -58,6 +59,12 @@
 #include "kudu/util/status.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/TargetSelect.h"
 
 using std::array;
 using std::atomic;
@@ -84,6 +91,7 @@ typedef RowProjector NoCodegenRP;
 typedef codegen::RowProjector CodegenRP;
 
 using codegen::CompilationManager;
+using codegen::ModuleBuilder;
 
 class CodegenTest : public KuduTest {
  public:
@@ -305,6 +313,13 @@ Status CodegenTest::CreatePartialSchema(const vector<size_t>& col_indexes,
     col_ids.push_back(defaults_.column_id(col_idx));
   }
   return defaults_.CreateProjectionByIdsIgnoreMissing(col_ids, out);
+}
+
+
+TEST_F(CodegenTest, CompileTestMZ) {
+  ASSERT_OK(ModuleBuilder::testLLJIT());
+
+
 }
 
 TEST_F(CodegenTest, ObservablesTest) {

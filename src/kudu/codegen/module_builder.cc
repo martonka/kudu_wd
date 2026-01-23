@@ -24,6 +24,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <iostream>
+#include <memory>
 
 // NOTE: among the headers below, the MCJIT.h header file is needed
 //       for successful run-time operation of the code generator.
@@ -34,8 +36,11 @@
 #include <llvm/ADT/ilist_iterator.h>
 #include <llvm/ADT/iterator.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
-#include <llvm/ExecutionEngine/MCJIT.h> // IWYU pragma: keep
-#include <llvm/ExecutionEngine/RTDyldMemoryManager.h>
+#include <llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h>
+#include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
+#include <llvm/ExecutionEngine/Orc/Core.h>
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include <llvm/IR/Attributes.h>
 #include <llvm/IR/Constant.h>
 #include <llvm/IR/Constants.h>
@@ -55,9 +60,11 @@
 #include <llvm/Support/raw_os_ostream.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
+#include <llvm/Support/TargetSelect.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/AlwaysInliner.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
+#include <llvm/IR/Verifier.h>
 
 #include "kudu/codegen/jit_frame_manager.h"
 #include "kudu/codegen/precompiled.ll.h"
@@ -103,6 +110,14 @@ using std::unique_ptr;
 using std::unordered_set;
 using std::vector;
 using strings::Substitute;
+
+#define CHECK_LLVM_EXPECTED(s, msg) \
+  do { \
+    if (!s) { \
+      std::string llvm_msg  = llvm::toString(Val.takeError()); \
+      return Status::ConfigurationError(msg, llvm_msg); \
+    } \
+  } while (0)
 
 namespace kudu {
 namespace codegen {
@@ -306,6 +321,136 @@ vector<string> GetHostCPUAttrs() {
 
 } // anonymous namespace
 
+
+using namespace llvm;
+using namespace llvm::orc;
+
+// Baseline: template specialization the “normal C++ way”
+template <int Divisor>
+static bool isDivisibleCpp(int32_t n) {
+  return n % Divisor == 0;
+}
+
+// Build LLVM IR for:
+//   extern "C" int32_t isDivisible_<divisor>(int32_t n) { return (n % divisor) == 0; }
+static std::unique_ptr<Module> buildIsDivisibleModule(LLVMContext &ctx,
+                                                      int32_t divisor) {
+  auto mod = std::make_unique<Module>("divisible_jit", ctx);
+  mod->setTargetTriple(sys::getDefaultTargetTriple());
+
+  IRBuilder<> b(ctx);
+  Type *i32 = b.getInt32Ty();
+
+  // i32 (i32)
+  FunctionType *fty = FunctionType::get(i32, {i32}, false);
+
+  std::string fnName = "isDivisible_" + std::to_string(divisor);
+  Function *fn = Function::Create(fty, Function::ExternalLinkage, fnName, mod.get());
+
+  Argument *n = fn->getArg(0);
+  n->setName("n");
+
+  BasicBlock *entry = BasicBlock::Create(ctx, "entry", fn);
+  b.SetInsertPoint(entry);
+
+  // rem = n % divisor
+  Value *rem = b.CreateSRem(n, b.getInt32(divisor));
+
+  // cmp = (rem == 0)
+  Value *cmp = b.CreateICmpEQ(rem, b.getInt32(0));
+
+  // return cmp ? 1 : 0
+  Value *ret = b.CreateSelect(cmp, b.getInt32(1), b.getInt32(0));
+  b.CreateRet(ret);
+
+  if (verifyModule(*mod, &errs())) {
+    errs() << "Module verification failed!\n";
+    return nullptr;
+  }
+  return mod;
+}
+
+template <class Fn>
+static double benchmark(const char *label, Fn &&f, int32_t maxN, int iters) {
+  using clock = std::chrono::high_resolution_clock;
+
+  // Volatile sink prevents over-optimization removing the loop entirely.
+  volatile int64_t sink = 0;
+
+  auto t0 = clock::now();
+  for (int k = 0; k < iters; ++k) {
+    for (int32_t n = 1; n <= maxN; ++n) {
+      sink += (int64_t)f(n);
+    }
+  }
+  auto t1 = clock::now();
+  std::chrono::duration<double> dt = t1 - t0;
+
+  std::cout << label << ": " << dt.count() << "s"
+            << " (sink=" << sink << ")\n";
+  return dt.count();
+}
+
+Status ModuleBuilder::testLLJIT() {
+  InitializeNativeTarget();
+  InitializeNativeTargetAsmPrinter();
+  InitializeNativeTargetAsmParser();
+
+  // Create LLJIT
+  auto jitExpected = LLJITBuilder().create();
+  if (!jitExpected) {
+    return Status::ConfigurationError(
+        "Could not create LLJIT for JIT compilation",
+        llvm::toString(jitExpected.takeError()));
+  }
+  std::unique_ptr<LLJIT> jit = std::move(*jitExpected);
+
+  constexpr int32_t Divisor = 7;
+
+  // Thread-safe context + module build
+  auto tsc = std::make_unique<ThreadSafeContext>(std::make_unique<LLVMContext>());
+  LLVMContext &ctx = *tsc->getContext();
+
+  auto mod = buildIsDivisibleModule(ctx, Divisor);
+  if (!mod) {
+    return Status::ConfigurationError("Could not build isDivisible module", "");
+  }
+
+  // Add module to JIT
+  ThreadSafeModule tsm(std::move(mod), *tsc);
+  if (auto err = jit->addIRModule(std::move(tsm))) {
+    return Status::ConfigurationError("Failed to add IR module", llvm::toString(std::move(err)));
+  }
+
+  // Lookup symbol
+  std::string symName = "isDivisible_" + std::to_string(Divisor);
+  auto symExpected = jit->lookup(symName);
+  if (!symExpected) {
+    return Status::ConfigurationError(
+        "Symbol lookup failed for " + symName,
+        llvm::toString(symExpected.takeError()));
+  }
+
+  auto addr_u64 = symExpected->getValue();              // usually a uint64_t
+  using JitFn = int32_t (*)(int32_t);
+  auto isDivisibleJit =
+      reinterpret_cast<JitFn>(static_cast<uintptr_t>(addr_u64));
+
+  // Benchmark
+  const int32_t maxN = 2'000'000; // adjust workload
+  const int iters = 3;
+
+  benchmark("C++ template isDivisible<7>",
+            [&](int32_t n) { return (int32_t)isDivisibleCpp<Divisor>(n); },
+            maxN, iters);
+
+  benchmark("LLJIT isDivisible_7",
+            [&](int32_t n) { return isDivisibleJit(n); },
+            maxN, iters);
+
+  return Status::OK();
+}
+
 Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
   CHECK_EQ(state_, kBuilding);
 
@@ -316,7 +461,22 @@ Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
 #else
   Level opt_level = llvm::CodeGenOpt::None;
 #endif
+
+#if 0
+  auto JTMB = JITTargetMachineBuilder::detectHost();
+  CHECK_LLVM_EXPECTED(JTMB, "Could not detect host for JIT compilation");
+
+
+  JTMB.setCPU(sys::getHostCPUName().str());
+  JTMB.addFeatures(GetHostCPUAttrs());
+  JTMB.setCodeGenOptLevel(CodeGenOptLevel::Aggressive);
+
+  auto jit = LLJITBuilder()
+    .setJITTargetMachineBuilder(std::move(JTMB))
+    .create();
+  CHECK_LLVM_EXPECTED(jit, "Could not create LLJIT for JIT compilation");
   Module* module = module_.get();
+<<<<<<< HEAD
   EngineBuilder ebuilder(std::move(module_));
   ebuilder.setMCJITMemoryManager(std::make_unique<JITFrameManager>(
       std::make_unique<JITFrameManager::CustomMapper>()));
@@ -325,6 +485,8 @@ Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
   ebuilder.setMCPU(llvm::sys::getHostCPUName());
   ebuilder.setMAttrs(GetHostCPUAttrs());
   target_ = ebuilder.selectTarget();
+=======
+>>>>>>> Minimal LLJIt usage example compiles and run
   unique_ptr<ExecutionEngine> local_engine(ebuilder.create(target_));
   if (!local_engine) {
     return Status::ConfigurationError("Code generation for module failed. "
@@ -359,6 +521,7 @@ Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
   // Upon success write to the output parameter
   out->swap(local_engine);
   state_ = kCompiled;
+#endif
   return Status::OK();
 }
 

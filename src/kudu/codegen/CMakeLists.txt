@@ -25,13 +25,14 @@
 #######################################
 
 set(LLVM_REQ_COMPONENTS
-  analysis
-  irreader
-  instrumentation
-  ipo
-  mcdisassembler
-  mcjit
+  #analysis
+  #irreader
+  #instrumentation
+  #ipo
   native
+  orcjit
+  
+  #orcshared
 )
 
 ## Add preprocessor defs and include directories
@@ -209,13 +210,13 @@ add_library(codegen
   row_projector.cc
   ${IR_OUTPUT_CC})
 
-target_link_libraries(codegen
-  ${llvm_LIBRARIES}
+target_link_libraries(codegen PUBLIC
   kudu_common
   kudu_util
   gutil
   kudu_common_proto)
 
+target_link_libraries(codegen PRIVATE ${llvm_LIBRARIES})
 #######################################
 # Unit tests
 #######################################

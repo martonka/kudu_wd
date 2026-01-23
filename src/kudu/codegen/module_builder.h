@@ -115,6 +115,10 @@ class ModuleBuilder {
   // Pointer is valid while Compile()'s ExecutionEngine is.
   llvm::TargetMachine* GetTargetMachine() const;
 
+
+  // TODO remove
+  static Status testLLJIT();
+
  private:
   // The different states a ModuleBuilder can be in.
   enum MBState {
