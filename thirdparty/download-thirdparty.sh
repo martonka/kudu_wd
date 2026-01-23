@@ -346,21 +346,14 @@ fetch_and_patch \
  $PYTHON_SOURCE \
  $PYTHON_PATCHLEVEL
 
-<<<<<<< HEAD
-LLVM_PATCHLEVEL=2
-=======
-LLVM_PATCHLEVEL=1
->>>>>>> llvm-debug
+LLVM_PATCHLEVEL=3
 fetch_and_patch \
  llvm-${LLVM_VERSION}-iwyu-${IWYU_VERSION}.src.tar.gz \
  $LLVM_SOURCE \
  $LLVM_PATCHLEVEL \
-<<<<<<< HEAD
  "patch -p1 < $TP_DIR/patches/llvm-section-mm-memory-mapper.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-section-mm-extra-methods.patch"
-=======
  "patch -p1 < $TP_DIR/patches/llvm-mcjit-bail-on-error.patch"
->>>>>>> llvm-debug
 
 LZ4_PATCHLEVEL=0
 fetch_and_patch \
