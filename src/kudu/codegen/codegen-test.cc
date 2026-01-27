@@ -558,10 +558,10 @@ TEST_F(CodegenTest, CodegenEHFrameRace) {
 // cache but also kept around for time intervals of randomized durations.
 // The source schemas and projections are also randomized.
 TEST_F(CodegenTest, CodegenRandomSchemas) {
-  SKIP_IF_SLOW_NOT_ALLOWED();
+  // SKIP_IF_SLOW_NOT_ALLOWED();
 
   constexpr const size_t kNumThreads = 16;
-  constexpr const size_t kNumProjectionsPerSchema = 32;
+  constexpr const size_t kNumProjectionsPerSchema = 320;
 
   // Create 'library' of columns to build schemas for the test scenario.
   const array<ColumnSchema, 31> cs_library{
