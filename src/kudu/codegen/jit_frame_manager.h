@@ -24,6 +24,8 @@
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
 #include <llvm/ADT/StringRef.h>
 
+
+
 namespace kudu {
 namespace codegen {
 
@@ -48,9 +50,12 @@ class JITFrameManager : public llvm::SectionMemoryManager {
   // multiple instances, it's a static one.
   static std::mutex kRegistrationMutex;
 
+
+  std::vector<std::vector<std::unique_ptr<std::uint8_t[]> > > registered_frame_array_;
   // Container to keep track of registered frames: this information is necessary
   // for unregistring all of them.
   std::deque<uint8_t*> registered_frames_;
+
 };
 
 } // namespace codegen
