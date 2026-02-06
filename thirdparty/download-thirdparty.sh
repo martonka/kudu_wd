@@ -346,28 +346,15 @@ fetch_and_patch \
  $PYTHON_SOURCE \
  $PYTHON_PATCHLEVEL
 
-LLVM_PATCHLEVEL=10
+LLVM_PATCHLEVEL=3
+LLVM_PATCHLEVEL=1
 fetch_and_patch \
  llvm-${LLVM_VERSION}-iwyu-${IWYU_VERSION}.src.tar.gz \
  $LLVM_SOURCE \
  $LLVM_PATCHLEVEL \
- "patch -p1 < $TP_DIR/patches/llvm-add-iwyu.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-iwyu-718e69875.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-iwyu-0de60d8a2.patch" \
- "patch -d projects -p1 < $TP_DIR/patches/llvm-remove-cyclades-inclusion-in-sanitizer.patch" \
- "patch -p2 < $TP_DIR/patches/llvm-fix-missing-include.patch" \
- "patch -d projects -p1 < $TP_DIR/patches/llvm-Sanitizer-built-against-glibc-2_34-doesnt-work.patch" \
- "patch -d tools -p1 < $TP_DIR/patches/llvm-ignore-flto-values.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-01.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-02.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-include-llvm-support-signals.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-is-convertible-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-is-convertible-01.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-01.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-section-mm-memory-mapper.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-section-mm-extra-methods.patch"
+ "patch -p1 < $TP_DIR/patches/llvm-section-mm-extra-methods.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-mcjit-bail-on-error.patch" \
 
 LZ4_PATCHLEVEL=0
 fetch_and_patch \

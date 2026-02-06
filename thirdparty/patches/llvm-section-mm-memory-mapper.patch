@@ -20,8 +20,8 @@ Date:   Wed Jul 5 14:28:47 2023 +0200
 
 diff --git a/include/llvm/ExecutionEngine/SectionMemoryManager.h b/include/llvm/ExecutionEngine/SectionMemoryManager.h
 index 455efc9f9001..fa1b2355528d 100644
---- a/include/llvm/ExecutionEngine/SectionMemoryManager.h
-+++ b/include/llvm/ExecutionEngine/SectionMemoryManager.h
+--- a/llvm/include/llvm/ExecutionEngine/SectionMemoryManager.h
++++ b/llvm/include/llvm/ExecutionEngine/SectionMemoryManager.h
 @@ -185,7 +185,8 @@ private:
    MemoryGroup CodeMem;
    MemoryGroup RWDataMem;
@@ -34,8 +34,8 @@ index 455efc9f9001..fa1b2355528d 100644
  } // end namespace llvm
 diff --git a/lib/ExecutionEngine/SectionMemoryManager.cpp b/lib/ExecutionEngine/SectionMemoryManager.cpp
 index b23e33039c35..436888730bfb 100644
---- a/lib/ExecutionEngine/SectionMemoryManager.cpp
-+++ b/lib/ExecutionEngine/SectionMemoryManager.cpp
+--- a/llvm/lib/ExecutionEngine/SectionMemoryManager.cpp
++++ b/llvm/lib/ExecutionEngine/SectionMemoryManager.cpp
 @@ -101,7 +101,7 @@ uint8_t *SectionMemoryManager::allocateSection(
    // FIXME: Initialize the Near member for each memory group to avoid
    // interleaving.
