@@ -76,8 +76,9 @@ if [[ -f "/usr/bin/yum" ]]; then
   if [[ "$OS_MAJOR_VERSION" -ge "8" ]]; then
     yum install -y perl python3 python3-pip
     yum groupinstall -y "Development Tools"
-    alternatives --install /usr/bin/python python /usr/bin/python3 1
-    alternatives --set python /usr/bin/python3
+    if [[ "$OS_MAJOR_VERSION" -eq "8" ]]; then
+      alternatives --set python /usr/bin/python3
+    fi
   fi
 
   # Install exta impala packages for the impala images. They are nominal in size.
@@ -108,7 +109,10 @@ if [[ -f "/usr/bin/yum" ]]; then
   fi
 
   # Install libraries often used for Kudu development and build performance.
-  yum install -y epel-release
+  if ! yum install -y epel-release; then
+    yum install -y \
+      https://dl.fedoraproject.org/pub/epel/epel-release-latest-${OS_MAJOR_VERSION}.noarch.rpm
+  fi
   yum install -y \
     ccache \
     cmake \
