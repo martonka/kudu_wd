@@ -352,7 +352,7 @@ fetch_and_patch \
  $LLVM_SOURCE \
  $LLVM_PATCHLEVEL \
  "patch -p1 < $TP_DIR/patches/llvm-section-mm-memory-mapper.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-section-mm-extra-methods.patch"
+ "patch -p1 < $TP_DIR/patches/llvm-section-mm-extra-methods.patch" \
  "patch -p1 < $TP_DIR/patches/llvm-mcjit-bail-on-error.patch"
 
 LZ4_PATCHLEVEL=0
