@@ -27,12 +27,14 @@
 
 #include <glog/logging.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
+#include <llvm/Support/Alignment.h>
 #include <llvm/Support/Memory.h>
 #include <llvm/Support/Process.h>
 
 #include "kudu/gutil/casts.h"
 #include "kudu/gutil/port.h"
 
+using llvm::alignTo;
 using llvm::SectionMemoryManager;
 using llvm::sys::Memory;
 using llvm::sys::MemoryBlock;
@@ -232,35 +234,27 @@ JITFrameManager::~JITFrameManager() {
 }
 
 void JITFrameManager::reserveAllocationSpace(uintptr_t code_size,
-                                             uint32_t code_align,
+                                             llvm::Align code_align,
                                              uintptr_t ro_data_size,
-                                             uint32_t ro_data_align,
+                                             llvm::Align ro_data_align,
                                              uintptr_t rw_data_size,
-                                             uint32_t rw_data_align) {
+                                             llvm::Align rw_data_align) {
   // This can be called only once per JITFrameManager instance.
   DCHECK(!preallocated_block_.base());
   DCHECK_EQ(0, preallocated_block_.allocatedSize());
 
-  DCHECK_NE(0, code_align);
-  DCHECK_NE(0, ro_data_align);
-  DCHECK_NE(0, rw_data_align);
-
   static const size_t page_size = Process::getPageSizeEstimate();
 
-  constexpr auto align_up = [](uintptr_t size, uint32_t alignment) {
-    return alignment * ((size + alignment - 1) / alignment);
-  };
-
-  const auto code_required_size_bytes = align_up(code_size, code_align);
-  const auto ro_data_required_size_bytes = align_up(ro_data_size, ro_data_align);
-  const auto rw_data_required_size_bytes = align_up(rw_data_size, rw_data_align);
+  const auto code_required_size_bytes = alignTo(code_size, code_align);
+  const auto ro_data_required_size_bytes = alignTo(ro_data_size, ro_data_align);
+  const auto rw_data_required_size_bytes = alignTo(rw_data_size, rw_data_align);
 
   // Extra safety margin: pre-allocate 2 times more, aligning up the the memory
   // page size for each section type.
   const size_t required_size_bytes = 2 * (
-      align_up(code_required_size_bytes, page_size) +
-      align_up(ro_data_required_size_bytes, page_size) +
-      align_up(rw_data_required_size_bytes, page_size));
+      alignTo(code_required_size_bytes, page_size) +
+      alignTo(ro_data_required_size_bytes, page_size) +
+      alignTo(rw_data_required_size_bytes, page_size));
 
   // Reserve enough memory for the jitted sections to avoid fragmentation and
   // eliminate the risk of interleaving with any other memory allocations by
