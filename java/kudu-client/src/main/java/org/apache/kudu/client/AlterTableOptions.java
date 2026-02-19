@@ -33,6 +33,7 @@ import org.apache.yetus.audience.InterfaceAudience;
 import org.apache.yetus.audience.InterfaceStability;
 
 import org.apache.kudu.ColumnSchema;
+import org.apache.kudu.ColumnTypeAttributes;
 import org.apache.kudu.Common;
 import org.apache.kudu.Schema;
 import org.apache.kudu.Type;
@@ -48,6 +49,7 @@ public class AlterTableOptions {
   private final AlterTableRequestPB.Builder pb = AlterTableRequestPB.newBuilder();
   private boolean wait = true;
   private boolean isAddingRangeWithCustomHashSchema = false;
+  private boolean isAddingNestedTypeColumn = false;
 
   /**
    * Change a table's name.
@@ -95,6 +97,7 @@ public class AlterTableOptions {
     if (colSchema.isKey()) {
       throw new IllegalArgumentException("Key columns cannot be added");
     }
+    this.isAddingNestedTypeColumn |= colSchema.isNestedType();
     AlterTableRequestPB.Step.Builder step = pb.addAlterSchemaStepsBuilder();
     step.setType(AlterTableRequestPB.StepType.ADD_COLUMN);
     step.setAddColumn(AlterTableRequestPB.AddColumn.newBuilder()
@@ -104,12 +107,18 @@ public class AlterTableOptions {
 
   /**
    * Add a new column that's not nullable.
+   * <p><b>Note:</b> To add array-typed columns, use
+   * {@link #addNullableArrayColumn(String, Type)}
    * @param name name of the new column
    * @param type type of the new column
    * @param defaultVal default value used for the currently existing rows
    * @return this instance
    */
   public AlterTableOptions addColumn(String name, Type type, Object defaultVal) {
+    if (type == Type.NESTED) {
+      throw new IllegalArgumentException(
+          "Use addNullableArrayColumn() for array columns instead of addNullableColumn().");
+    }
     return addColumn(new ColumnSchema.ColumnSchemaBuilder(name, type)
         .defaultValue(defaultVal)
         .build());
@@ -117,26 +126,79 @@ public class AlterTableOptions {
 
   /**
    * Add a new column that's nullable and has no default value.
+   * <p><b>Note:</b> To add array-typed columns, use
+   * {@link #addNullableArrayColumn(String, Type)}.
    * @param name name of the new column
    * @param type type of the new column
    * @return this instance
    */
   public AlterTableOptions addNullableColumn(String name, Type type) {
+    if (type == Type.NESTED) {
+      throw new IllegalArgumentException(
+          "Use addNullableArrayColumn() for array columns instead of addNullableColumn().");
+    }
     return addNullableColumn(name, type, null);
   }
 
   /**
    * Add a new column that's nullable.
+   * <p><b>Note:</b> To add array-typed columns, use
+   * {@link #addNullableArrayColumn(String, Type)}.
    * @param name name of the new column
    * @param type type of the new column
    * @param defaultVal the default value of the new column
    * @return this instance
    */
   public AlterTableOptions addNullableColumn(String name, Type type, Object defaultVal) {
+    if (type == Type.NESTED) {
+      throw new IllegalArgumentException(
+          "Use addNullableArrayColumn() for array columns instead of addNullableColumn().");
+    }
     return addColumn(new ColumnSchema.ColumnSchemaBuilder(name, type)
         .nullable(true)
         .defaultValue(defaultVal)
         .build());
+  }
+
+
+  // TODO(achennaka) : Update addArrayColumn() here once default values for array datatype
+  // are implemented.
+  /**
+   * Adds a new nullable array column to the table schema.
+   *
+   * <p>If {@code attrs} is {@code null}, the column will use the default
+   * type attributes for the specified element type.
+   *
+   * @param name name of the new array column
+   * @param elementType element type stored in the array
+   * @param attrs optional type attributes for the element type
+   *              (precision/scale for DECIMAL, length for VARCHAR, etc.)
+   * @return this {@link AlterTableOptions} instance
+   * @throws IllegalArgumentException if the element type is unsupported
+   */
+  public AlterTableOptions addNullableArrayColumn(
+      String name, Type elementType, ColumnTypeAttributes attrs) {
+    ColumnSchema.ColumnSchemaBuilder builder =
+        new ColumnSchema.ColumnSchemaBuilder(name, elementType)
+            .array(true)
+            .nullable(true);
+    if (attrs != null) {
+      builder.typeAttributes(attrs);
+    }
+    return addColumn(builder.build());
+  }
+
+  /**
+   * Adds a new nullable array column to the table schema using
+   * the default type attributes for the element type.
+   *
+   * @param name name of the new array column
+   * @param elementType element type stored in the array
+   * @return this {@link AlterTableOptions} instance
+   * @throws IllegalArgumentException if the element type is unsupported
+   */
+  public AlterTableOptions addNullableArrayColumn(String name, Type elementType) {
+    return addNullableArrayColumn(name, elementType, null);
   }
 
   /**
@@ -599,6 +661,10 @@ public class AlterTableOptions {
         requiredFeatureFlags.add(
                 Integer.valueOf(Master.MasterFeatures.RANGE_SPECIFIC_HASH_SCHEMA_VALUE));
       }
+    }
+    if (isAddingNestedTypeColumn) {
+      requiredFeatureFlags.add(
+          Integer.valueOf(Master.MasterFeatures.ARRAY_1D_COLUMN_TYPE_VALUE));
     }
     return requiredFeatureFlags;
   }

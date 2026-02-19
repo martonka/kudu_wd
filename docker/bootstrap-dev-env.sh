@@ -29,13 +29,6 @@ set -o pipefail
 # Install the prerequisite libraries, if they are not installed.
 # CentOS/RHEL
 if [[ -f "/usr/bin/yum" ]]; then
-  if [ -e /etc/os-release ]; then
-    source /etc/os-release
-    OS_MAJOR_VERSION=$(echo $VERSION_ID | cut -f1 -d.)
-  else
-    echo "Unable to get RHEL version"
-    exit 1
-  fi
   # Update the repo.
   yum update -y
 
@@ -70,15 +63,6 @@ if [[ -f "/usr/bin/yum" ]]; then
     which \
     wget
 
-  if [[ "$OS_MAJOR_VERSION" -ge "9" ]]; then
-    yum install -y  krb5-libs krb5-devel
-  fi
-
-  if [[ "$OS_MAJOR_VERSION" -ge "8" ]]; then
-    yum groupinstall -y "Development Tools"
-  fi
-
-
   # Get the major version for version specific package logic below.
   OS_MAJOR_VERSION=$(lsb_release -rs | cut -f1 -d.)
 
@@ -93,20 +77,7 @@ if [[ -f "/usr/bin/yum" ]]; then
   # to install the ninja-build package.
   if [[ "$OS_MAJOR_VERSION" -gt "7" ]]; then
     yum install -y 'dnf-command(config-manager)'
-
-    ARCH="$(arch)"
-    CANDIDATES=(
-      "codeready-builder-for-rhel-${OS_MAJOR_VERSION}-${ARCH}-rpms"
-      "codeready-builder-for-rhel-${OS_MAJOR_VERSION}-${ARCH}-rpms-internal"
-      "rhui-codeready-builder-for-rhel-${OS_MAJOR_VERSION}-rhui-rpms" # aws
-    )
-    ALL_REPOS="$(yum repolist all -q 2>/dev/null)"
-    for rid in "${CANDIDATES[@]}"; do
-      if printf '%s\n' "$ALL_REPOS" | awk '{print $1}' | grep -qx "$rid"; then
-        yum config-manager --set-enabled "$rid"
-        break
-      fi
-    done
+    yum config-manager --set-enabled powertools
   fi
 
   # Install libraries often used for Kudu development and build performance.

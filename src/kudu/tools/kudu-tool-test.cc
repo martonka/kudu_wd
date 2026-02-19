@@ -130,6 +130,7 @@
 #include "kudu/tserver/tserver_admin.proxy.h"
 #include "kudu/util/async_util.h"
 #include "kudu/util/env.h"
+#include "kudu/util/faststring.h"
 #include "kudu/util/jsonreader.h"
 #include "kudu/util/logging_test_util.h"
 #include "kudu/util/metrics.h"
@@ -1546,7 +1547,7 @@ TEST_F(ToolTest, TestModeHelp) {
         "status.*Get the status",
         "timestamp.*Get the current timestamp",
         "list.*List masters in a Kudu cluster",
-        "add.*Add a master to the Kudu cluster",
+        "add.*Add a new master to existing Kudu cluster",
         "remove.*Remove a master from the Kudu cluster",
     };
     NO_FATALS(RunTestHelp(kCmd, kMasterModeRegexes));
@@ -1591,6 +1592,39 @@ TEST_F(ToolTest, TestModeHelp) {
     };
     NO_FATALS(RunTestHelp(kCmd, kPerfRegexes));
     NO_FATALS(RunTestHelpRpcFlags(kCmd, {"loadgen", "table_scan"}));
+
+    const vector<string> kLoadgenHelpRegexes = {
+      "-array_max_elem_num.*Maximum number of elements to generate",
+      "-auto_database.*The database in which to create the automatically generated",
+      "-buffer_flush_watermark_pct.*Mutation buffer flush watermark",
+      "-buffer_size_bytes.*Size of the mutation buffer, per session",
+      "-buffers_num.*Number of mutation buffers per session",
+      "-enable_array_columns.*Whether to add and populate with data",
+      "-error_buffer_size_bytes.*Size of the error buffer, per session",
+      "-flush_per_n_rows.*Perform async flush per given number of rows added",
+      "-keep_auto_table.*If using the auto-generated table",
+      "-num_rows_per_thread.*Number of rows each thread generates and inserts",
+      "-num_threads.*Number of threads to run",
+      "-run_cleanup.*Whether to run post-insertion deletion",
+      "-run_scan.*Whether to run post-insertion scan",
+      "-seq_start.*Initial value for the generator in sequential mode",
+      "-show_first_n_errors.*Output detailed information",
+      "-string_fixed.*Pre-defined string to write",
+      "-string_len.*Length of strings to put into string and binary columns",
+      "-table_name.*Name of an existing table to use for the test",
+      "-table_num_hash_partitions.*The number of hash partitions to create",
+      "-table_num_range_partitions.*The number of range partitions to create",
+      "-table_num_replicas.*The number of replicas for the auto-created table",
+      "-txn_start.*Whether the generated rows are inserted",
+      "-txn_commit.*Whether to commit the multi-row transaction",
+      "-txn_rollback.*Whether to rollback the multi-row transaction",
+      "-use_client_per_thread.*Use a separate KuduClient instance",
+      "-use_random.*Whether to use random numbers",
+      "-use_random_pk.*Whether to use random numbers",
+      "-use_random_non_pk.*Whether to use random numbers",
+      "-use_upsert.*Whether to use UPSERT instead of INSERT",
+    };
+    NO_FATALS(RunTestHelp("perf loadgen --help", kLoadgenHelpRegexes));
   }
   {
     const string kCmd = "remote_replica";
@@ -3894,6 +3928,29 @@ TEST_F(ToolTest, LoadgenEnableArrayColumn) {
   NO_FATALS(RunLoadgen(1, { "--enable_array_columns", "--run_scan" }));
 }
 
+// Customize the setting for --array_max_elem_num flag with higher than the
+// default setting, but still lower than the default value for the
+// --array_cell_max_elem_num flag at the server side.
+TEST_F(ToolTest, LoadgenMaxNumberElementsInArrayCustom) {
+  NO_FATALS(RunLoadgen(1, { "--enable_array_columns",
+                            "--array_max_elem_num=512",
+                            "--run_scan" }));
+}
+
+// Generate empty arrays (there might be a NULL array cells as well).
+TEST_F(ToolTest, LoadgenEmptyArrays) {
+  NO_FATALS(RunLoadgen(1, { "--enable_array_columns",
+                            "--array_max_elem_num=0",
+                            "--run_scan" }));
+}
+
+TEST_F(ToolTest, LoadgenAtMostOneElementInArray) {
+  // Generate at most one element per array cell.
+  NO_FATALS(RunLoadgen(1, { "--enable_array_columns",
+                            "--array_max_elem_num=1",
+                            "--run_scan" }));
+}
+
 TEST_F(ToolTest, TestLoadgenDatabaseName) {
   NO_FATALS(RunLoadgen(1, { "--auto_database=foo", "--keep_auto_table=true" }));
   string out;
@@ -4256,7 +4313,7 @@ TEST_F(ToolTest, TestNonRandomWorkloadLoadgen) {
     };
     NO_FATALS(StartExternalMiniCluster(std::move(opts)));
   }
-  const vector<string> base_args = {
+  const vector<string> args = {
     "perf", "loadgen",
     cluster_->master()->bound_rpc_addr().ToString(),
     "--keep_auto_table",
@@ -4273,20 +4330,28 @@ TEST_F(ToolTest, TestNonRandomWorkloadLoadgen) {
     // Since we're using such large payloads, flush more frequently so the
     // client doesn't run out of memory.
     "--flush_per_n_rows=1",
+
+    // Partition the auto-created table so each thread inserts to a single range.
+    "--table_num_range_partitions=4",
+    "--table_num_hash_partitions=1",
   };
 
-  // Partition the table so each thread inserts to a single range.
-  vector<string> args = base_args;
-  args.emplace_back("--table_num_range_partitions=4");
-  args.emplace_back("--table_num_hash_partitions=1");
   ASSERT_OK(RunKuduTool(args));
 
   // Check that the insert workload didn't require any bloom lookups.
   ExternalTabletServer* ts = cluster_->tablet_server(0);
   int64_t bloom_lookups = 0;
-  ASSERT_OK(itest::GetInt64Metric(ts->bound_http_hostport(),
-      &METRIC_ENTITY_tablet, nullptr, &METRIC_bloom_lookups, "value", &bloom_lookups));
-  ASSERT_EQ(0, bloom_lookups);
+  faststring raw_metrics_output;
+  ASSERT_OK(itest::GetInt64Metric(
+      ts->bound_http_hostport(),
+      &METRIC_ENTITY_tablet,
+      "*",  // sum up accross all the tablets of the auto-created table
+      &METRIC_bloom_lookups,
+      "value",
+      &bloom_lookups,
+      /*is_secure=*/false,
+      &raw_metrics_output));
+  ASSERT_EQ(0, bloom_lookups) << raw_metrics_output.ToString();
 }
 
 TEST_F(ToolTest, TestPerfTableScan) {

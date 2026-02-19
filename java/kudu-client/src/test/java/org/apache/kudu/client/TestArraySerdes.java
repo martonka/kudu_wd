@@ -26,50 +26,6 @@ import java.util.Arrays;
 import org.junit.Test;
 
 public class TestArraySerdes {
-  // Helper to box primitive arrays for comparison
-  private static Object[] toObjectArray(Object arr) {
-    if (arr instanceof int[]) {
-      return Arrays.stream((int[]) arr).boxed().toArray();
-    }
-    if (arr instanceof long[]) {
-      return Arrays.stream((long[]) arr).boxed().toArray();
-    }
-    if (arr instanceof double[]) {
-      return Arrays.stream((double[]) arr).boxed().toArray();
-    }
-    if (arr instanceof float[]) {
-      float[] f = (float[]) arr;
-      Float[] boxed = new Float[f.length];
-      for (int i = 0; i < f.length; i++) {
-        boxed[i] = f[i];
-      }
-      return boxed;
-    }
-    if (arr instanceof short[]) {
-      short[] s = (short[]) arr;
-      Short[] boxed = new Short[s.length];
-      for (int i = 0; i < s.length; i++) {
-        boxed[i] = s[i];
-      }
-      return boxed;
-    }
-    if (arr instanceof byte[]) {
-      byte[] b = (byte[]) arr;
-      Byte[] boxed = new Byte[b.length];
-      for (int i = 0; i < b.length; i++) {
-        boxed[i] = b[i];
-      }
-      return boxed;
-    }
-    if (arr instanceof String[]) {
-      return (String[]) arr;
-    }
-    if (arr instanceof byte[][]) {
-      return (byte[][]) arr;
-    }
-    throw new IllegalArgumentException("Unsupported array type: " + arr.getClass());
-  }
-
   // ----------------------------
   // INT8
   // ----------------------------
@@ -306,4 +262,109 @@ public class TestArraySerdes {
     assertNotNull(res.getValidity());
     assertEquals(0, res.getValidity().length);
   }
+
+  // ----------------------------
+  // Empty validity vector tests
+  // ----------------------------
+  @Test
+  public void testEmptyValidityInt32AllValid() {
+    int[] vals = {10, 20, 30};
+    boolean[] validity = new boolean[0];
+
+    byte[] buf = Array1dSerdes.serializeInt32(vals, validity);
+    Array1dSerdes.ArrayResult res = Array1dSerdes.parseInt32(buf);
+
+    assertArrayEquals(vals, (int[]) res.getValues());
+    assertArrayEquals(new boolean[]{true, true, true}, res.getValidity());
+  }
+
+  @Test
+  public void testEmptyValidityStringAllValid() {
+    String[] vals = {"a", "b", "c"};
+    boolean[] validity = new boolean[0];
+
+    byte[] buf = Array1dSerdes.serializeString(vals, validity);
+    Array1dSerdes.ArrayResult res = Array1dSerdes.parseString(buf);
+
+    assertArrayEquals(vals, (String[]) res.getValues());
+    assertArrayEquals(new boolean[]{true, true, true}, res.getValidity());
+  }
+
+  @Test
+  public void testEmptyValidityBinaryAllValid() {
+    byte[][] vals = {
+        new byte[]{1, 2},
+        new byte[]{3, 4}
+    };
+    boolean[] validity = new boolean[0];
+
+    byte[] buf = Array1dSerdes.serializeBinary(vals, validity);
+    Array1dSerdes.ArrayResult res = Array1dSerdes.parseBinary(buf);
+
+    byte[][] decoded = (byte[][]) res.getValues();
+    assertEquals(vals.length, decoded.length);
+    for (int i = 0; i < vals.length; i++) {
+      assertArrayEquals(vals[i], decoded[i]);
+    }
+    assertArrayEquals(new boolean[]{true, true}, res.getValidity());
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testEmptyValidityStringWithNullsRejected() {
+    String[] vals = {"a", null, "b"};
+    boolean[] validity = new boolean[0];
+    Array1dSerdes.serializeString(vals, validity);
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testEmptyValidityBinaryWithNullsRejected() {
+    byte[][] vals = {
+        new byte[]{1, 2},
+        null,
+        new byte[]{3}
+    };
+    boolean[] validity = new boolean[0];
+    Array1dSerdes.serializeBinary(vals, validity);
+  }
+
+  // All true validity vector test
+  @Test
+  public void testAllTrueValiditySkipped_Int32() {
+    byte[] buf1 = Array1dSerdes.serializeInt32(new int[]{1, 2, 3}, null);
+    byte[] buf2 = Array1dSerdes.serializeInt32(new int[]{1, 2, 3},
+        new boolean[]{true, true, true});
+    byte[] buf3 = Array1dSerdes.serializeInt32(new int[]{1, 2, 3}, new boolean[0]);
+
+    assertArrayEquals(buf1, buf2);
+    assertArrayEquals(buf1, buf3);
+  }
+
+  @Test
+  public void testAllTrueValiditySkipped_String() {
+    String[] vals = {"a", "b", "c"};
+    byte[] buf1 = Array1dSerdes.serializeString(vals, null);
+    byte[] buf2 = Array1dSerdes.serializeString(vals,
+        new boolean[]{true, true, true});
+    byte[] buf3 = Array1dSerdes.serializeString(vals, new boolean[0]);
+
+    assertArrayEquals(buf1, buf2);
+    assertArrayEquals(buf1, buf3);
+  }
+
+  @Test
+  public void testAllTrueValiditySkipped_Binary() {
+    byte[][] vals = {
+        new byte[]{1, 2},
+        new byte[]{3, 4}
+    };
+    byte[] buf1 = Array1dSerdes.serializeBinary(vals, null);
+    byte[] buf2 = Array1dSerdes.serializeBinary(vals,
+        new boolean[]{true, true});
+    byte[] buf3 = Array1dSerdes.serializeBinary(vals, new boolean[0]);
+
+    assertArrayEquals(buf1, buf2);
+    assertArrayEquals(buf1, buf3);
+  }
+
+
 }

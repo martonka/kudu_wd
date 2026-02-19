@@ -35,6 +35,10 @@
 
 namespace kudu {
 
+namespace serdes {
+class ArrayTypeSerdesTest_Basic_Test;
+}
+
 constexpr serdes::ScalarArray KuduToScalarArrayType(DataType data_type) {
   switch (data_type) {
     case INT8:
@@ -90,13 +94,17 @@ class ArrayCellMetadataView final {
        : data_(buf),
          size_(size),
          content_(nullptr),
-         is_initialized_(false) {
+         elem_num_(0),
+         is_initialized_(false),
+         has_nulls_(false) {
   }
 
   Status Init() {
     DCHECK(!is_initialized_);
     if (size_ == 0) {
       content_ = nullptr;
+      elem_num_ = 0;
+      has_nulls_ = false;
       is_initialized_ = true;
       return Status::OK();
     }
@@ -139,18 +147,33 @@ class ArrayCellMetadataView final {
       return Status::IllegalState("null flatbuffers of non-zero size");
     }
 
-    DCHECK(content_);
-    if (const size_t bit_num = content_->validity()->size(); bit_num != 0) {
-      bitmap_.reset(new uint8_t[BitmapSize(bit_num)]);
-      auto* bm = bitmap_.get();
-      const auto* v = content_->validity();
-      for (size_t idx = 0; idx < bit_num; ++idx) {
-        if (v->Get(idx) != 0) {
-          BitmapSet(bm, idx);
-        } else {
-          BitmapClear(bm, idx);
-        }
-      }
+    // Short-curciut for the case when no fields are present.
+    if (PREDICT_FALSE(!content_->data() && !content_->validity())) {
+      elem_num_ = 0;
+      has_nulls_ = false;
+      is_initialized_ = true;
+      return Status::OK();
+    }
+
+    elem_num_ = GetElemNum();
+    const size_t validity_size = content_->validity() ? content_->validity()->size() : 0;
+    if (validity_size != 0 && BitmapSize(elem_num_) != validity_size) {
+      return Status::Corruption("'validity' and 'data' fields not in sync");
+    }
+
+    has_nulls_ = false;
+    if (validity_size != 0) {
+      // If the validity vector is supplied and with all its elements non-zero.
+      const auto& validity = *(DCHECK_NOTNULL(content_->validity()));
+      has_nulls_ = !BitmapIsAllSet(validity.Data(), 0, elem_num_);
+    }
+
+    if (has_nulls_) {
+      DCHECK_GT(validity_size, 0);
+      DCHECK_GT(elem_num_, 0);
+      DCHECK_EQ(validity_size, BitmapSize(elem_num_));
+      bitmap_.reset(new uint8_t[validity_size]);
+      memcpy(bitmap_.get(), content_->validity()->Data(), validity_size);
     }
     const auto data_type = content_->data_type();
     if (data_type != serdes::ScalarArray::BinaryArray &&
@@ -162,21 +185,22 @@ class ArrayCellMetadataView final {
 
     // Build the metadata on the spans of binary/string elements
     // in the buffer.
+    DCHECK(content_->data());
     if (data_type == serdes::ScalarArray::StringArray) {
-      const auto* values = content_->data_as<serdes::StringArray>()->values();
+      const auto* values = DCHECK_NOTNULL(
+          content_->data_as<serdes::StringArray>())->values();
       binary_data_spans_.reserve(values->size());
-      for (auto cit = values->cbegin(); cit != values->end(); ++cit) {
-        const auto* str = *cit;
-        DCHECK(str);
+      for (auto cit = values->cbegin(); cit != values->cend(); ++cit) {
+        const auto* str = DCHECK_NOTNULL(*cit);
         binary_data_spans_.emplace_back(str->c_str(), str->size());
       }
     } else {
       DCHECK(serdes::ScalarArray::BinaryArray == data_type);
-      const auto* values = content_->data_as<serdes::BinaryArray>()->values();
+      const auto* values = DCHECK_NOTNULL(
+          content_->data_as<serdes::BinaryArray>())->values();
       binary_data_spans_.reserve(values->size());
-      for (auto cit = values->cbegin(); cit != values->end(); ++cit) {
-        const auto* byte_seq = cit->values();
-        DCHECK(byte_seq);
+      for (auto cit = values->cbegin(); cit != values->cend(); ++cit) {
+        const auto* byte_seq = DCHECK_NOTNULL(cit->values());
         binary_data_spans_.emplace_back(byte_seq->Data(), byte_seq->size());
       }
     }
@@ -189,18 +213,24 @@ class ArrayCellMetadataView final {
   // Number of elements in the array.
   size_t elem_num() const {
     DCHECK(is_initialized_);
-    return content_ ? content_->validity()->size() : 0;
+    return elem_num_;
   }
 
   bool empty() const {
-    DCHECK(is_initialized_);
-    return content_ ? content_->validity()->empty() : true;
+    return elem_num() == 0;
   }
 
   // Non-null (a.k.a. validity) bitmap for the array elements.
   const uint8_t* not_null_bitmap() const {
     DCHECK(is_initialized_);
+    DCHECK((has_nulls_ && bitmap_) || (!has_nulls_ && !bitmap_));
     return bitmap_.get();
+  }
+
+  bool has_nulls() const {
+    DCHECK(is_initialized_);
+    DCHECK((has_nulls_ && bitmap_) || (!has_nulls_ && !bitmap_));
+    return has_nulls_;
   }
 
   const uint8_t* data_as(DataType data_type) const {
@@ -250,12 +280,53 @@ class ArrayCellMetadataView final {
   }
 
  private:
-  FRIEND_TEST(ArrayTypeSerdesTest, Basic);
+  FRIEND_TEST(serdes::ArrayTypeSerdesTest, Basic);
 
   template<typename T>
   const uint8_t* data() const {
     DCHECK(is_initialized_);
     return content_ ? content_->data_as<T>()->values()->Data() : nullptr;
+  }
+
+  size_t GetElemNum() const {
+    if (PREDICT_FALSE(!content_)) {
+      return 0;
+    }
+    if (PREDICT_FALSE(!content_->data())) {
+      return 0;
+    }
+    const auto data_type = content_->data_type();
+    switch (data_type) {
+      case serdes::ScalarArray::Int8Array:
+        return content_->data_as<serdes::Int8Array>()->values()->size();
+      case serdes::ScalarArray::UInt8Array:
+        return content_->data_as<serdes::UInt8Array>()->values()->size();
+      case serdes::ScalarArray::Int16Array:
+        return content_->data_as<serdes::Int16Array>()->values()->size();
+      case serdes::ScalarArray::UInt16Array:
+        return content_->data_as<serdes::UInt16Array>()->values()->size();
+      case serdes::ScalarArray::Int32Array:
+        return content_->data_as<serdes::Int32Array>()->values()->size();
+      case serdes::ScalarArray::UInt32Array:
+        return content_->data_as<serdes::UInt32Array>()->values()->size();
+      case serdes::ScalarArray::Int64Array:
+        return content_->data_as<serdes::Int64Array>()->values()->size();
+      case serdes::ScalarArray::UInt64Array:
+        return content_->data_as<serdes::UInt64Array>()->values()->size();
+      case serdes::ScalarArray::FloatArray:
+        return content_->data_as<serdes::FloatArray>()->values()->size();
+      case serdes::ScalarArray::DoubleArray:
+        return content_->data_as<serdes::DoubleArray>()->values()->size();
+      case serdes::ScalarArray::StringArray:
+        return content_->data_as<serdes::StringArray>()->values()->size();
+      case serdes::ScalarArray::BinaryArray:
+        return content_->data_as<serdes::BinaryArray>()->values()->size();
+      default:
+        LOG(DFATAL) << "unknown ScalarArray type: " << static_cast<size_t>(data_type);
+        break;
+    }
+
+    return 0;
   }
 
   // Flatbuffer-encoded data; a non-owning raw pointer.
@@ -269,6 +340,9 @@ class ArrayCellMetadataView final {
   // for an empty (size_ == 0) buffer.
   const serdes::Content* content_;
 
+  // Number of elements in the underlying flatbuffers buffer.
+  size_t elem_num_;
+
   // A bitmap built of the boolean validity vector.
   // TODO(aserbin): switch array1d to bitfield instead of bool vector for validity?
   std::unique_ptr<uint8_t[]> bitmap_;
@@ -279,6 +353,9 @@ class ArrayCellMetadataView final {
 
   // Whether the Init() method has been successfully run for this object.
   bool is_initialized_;
+
+  // Whether the underlying array has at least one null/invalid element.
+  bool has_nulls_;
 };
 
 } // namespace kudu

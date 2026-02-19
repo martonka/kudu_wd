@@ -16,15 +16,21 @@
 // under the License.
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <list>
 #include <memory>
 #include <ostream>
+#include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 // IWYU pragma: no_include "testing/base/public/gunit.h"
-#include <gflags/gflags_declare.h>
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <glog/stl_logging.h> // IWYU pragma: keep
 #include <gmock/gmock.h>
@@ -38,10 +44,14 @@
 #include "kudu/common/rowblock.h"
 #include "kudu/common/rowblock_memory.h"
 #include "kudu/common/schema.h"
+#include "kudu/gutil/integral_types.h"
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/gutil/singleton.h"
+#include "kudu/gutil/stringprintf.h"
+#include "kudu/util/countdown_latch.h"
 #include "kudu/util/logging_test_util.h"
 #include "kudu/util/memory/arena.h"
+#include "kudu/util/monotime.h"
 #include "kudu/util/random.h"
 #include "kudu/util/random_util.h"
 #include "kudu/util/slice.h"
@@ -49,12 +59,24 @@
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
 
+using std::array;
+using std::atomic;
+using std::back_inserter;
+using std::list;
+using std::sample;
 using std::string;
 using std::unique_ptr;
+using std::thread;
 using std::vector;
+
+DEFINE_int32(codegen_test_random_schemas_runtime_sec, 60,
+             "number of seconds to run the CodegenTest.CodegenRandomSchemas "
+             "scenario; a negative number means 'unlimited'");
 
 DECLARE_bool(codegen_dump_mc);
 DECLARE_int32(codegen_cache_capacity);
+DECLARE_int32(codegen_queue_capacity);
+DECLARE_int32(codegen_compiler_manager_pool_max_threads_num);
 
 namespace kudu {
 
@@ -125,8 +147,21 @@ class CodegenTest : public KuduTest {
   }
 
  protected:
+  typedef const void* DefaultValueType;
+  static const DefaultValueType kI8R;
+  static const DefaultValueType kI8W;
+  static const DefaultValueType kI16R;
+  static const DefaultValueType kI16W;
+  static const DefaultValueType kI32R;
+  static const DefaultValueType kI32W;
+  static const DefaultValueType kI64R;
+  static const DefaultValueType kI64W;
+  static const DefaultValueType kStrR;
+  static const DefaultValueType kStrW;
+
   Schema base_;
   Schema defaults_;
+  Random random_;
 
   // Compares the projection-for-read and projection-for-write results
   // of the codegen projection and the non-codegen projection
@@ -165,11 +200,8 @@ class CodegenTest : public KuduTest {
   static const int kNumTestRows = 10;
   static const size_t kIndirectPerRow = 4 * kRandomStringMaxLength;
   static const size_t kIndirectPerProjection = kIndirectPerRow * kNumTestRows;
-  typedef const void* DefaultValueType;
-  static const DefaultValueType kI32R, kI32W, kStrR, kStrW;
 
   codegen::CodeGenerator generator_;
-  Random random_;
   unique_ptr<ConstContiguousRow> test_rows_[kNumTestRows];
   RowBlockMemory projections_mem_;
   unique_ptr<Arena> test_rows_arena_;
@@ -177,10 +209,16 @@ class CodegenTest : public KuduTest {
 
 namespace {
 
+const int8_t kI8RValue = 0xBE;
+const int8_t kI8WValue = 0xEB;
+const int16_t kI16RValue = 0xA5A5;
+const int16_t kI16WValue = 0x5A5A;
 const int32_t kI32RValue = 0xFFFF0000;
 const int32_t kI32WValue = 0x0000FFFF;
-const   Slice kStrRValue = "RRRRR STRING DEFAULT READ";
-const   Slice kStrWValue = "WWWWW STRING DEFAULT WRITE";
+const int64_t kI64RValue = 0xF0F0F0F0F0F0F0F0;
+const int64_t kI64WValue = 0x0F0F0F0F0F0F0F0F;
+const Slice kStrRValue = "RRRRR STRING DEFAULT READ";
+const Slice kStrWValue = "WWWWW STRING DEFAULT WRITE";
 
 // Assumes all rows are selected
 // Also assumes schemas are the same.
@@ -200,8 +238,14 @@ void CheckRowBlocksEqual(const RowBlock* rb1, const RowBlock* rb2,
 
 } // anonymous namespace
 
+const CodegenTest::DefaultValueType CodegenTest::kI8R = &kI8RValue;
+const CodegenTest::DefaultValueType CodegenTest::kI8W = &kI8WValue;
+const CodegenTest::DefaultValueType CodegenTest::kI16R = &kI16RValue;
+const CodegenTest::DefaultValueType CodegenTest::kI16W = &kI16WValue;
 const CodegenTest::DefaultValueType CodegenTest::kI32R = &kI32RValue;
 const CodegenTest::DefaultValueType CodegenTest::kI32W = &kI32WValue;
+const CodegenTest::DefaultValueType CodegenTest::kI64R = &kI64RValue;
+const CodegenTest::DefaultValueType CodegenTest::kI64W = &kI64WValue;
 const CodegenTest::DefaultValueType CodegenTest::kStrR = &kStrRValue;
 const CodegenTest::DefaultValueType CodegenTest::kStrW = &kStrWValue;
 
@@ -446,6 +490,287 @@ TEST_F(CodegenTest, TestCodeCache) {
       ASSERT_GT(num_hits, 0);
       ASSERT_LT(num_hits, 24);
     }
+  }
+}
+
+// Test scenario to reproduce the race condition that leads to the behavior
+// described by KUDU-3545 before it was addressed. This works accross different
+// compilers/toolchains, while KUDU-3545 originally stipulated that the issue
+// is specific to GCC13 and the related toolchain.
+TEST_F(CodegenTest, CodegenEHFrameRace) {
+  constexpr const size_t kNumThreads = 2;
+
+  // For easier reproduction of the race, allow for multiple threads in the
+  // codegen compile thread pool. It results in a race condition in libgcc
+  // when concurrently registering EH frames.
+  FLAGS_codegen_compiler_manager_pool_max_threads_num = 3;
+
+  // A smaller codegen cache might help to create situations when a race
+  // condition happens when just a single codegen compiler thread is active.
+  // Upon adding a new entry into the cache, an entry would be evicted
+  // if it's not enough space, and its EH frames would unregistered,
+  // while another compiler request might be running at the only active thread
+  // in the compiler thread pool, registering correspoding EH frames.
+  // It creates a race condition in libgcc, and that's the original issue
+  // behind KUDU-3545.
+  FLAGS_codegen_cache_capacity = 10;
+  Singleton<CompilationManager>::UnsafeReset();
+  CompilationManager* cm = CompilationManager::GetSingleton();
+
+  CountDownLatch start(kNumThreads);
+  vector<thread> threads;
+  threads.reserve(kNumThreads);
+  for (size_t idx = 0; idx < kNumThreads; ++idx) {
+    threads.emplace_back([&]() {
+      start.Wait();
+      for (auto pass = 0; pass < 10; ++pass) {
+        // Generate all permutations of the first 4 columns (24 permutations).
+        // For each such permutation, reate a projection and request code
+        // generation.
+        vector<size_t> perm = { 0, 1, 2, 4 };
+        do {
+          SCOPED_TRACE(perm);
+          Schema projection;
+          const auto s = CreatePartialSchema(perm, &projection);
+          if (!s.ok()) {
+            LOG(WARNING) << s.ToString();
+            return;
+          }
+
+          unique_ptr<CodegenRP> projector;
+          cm->RequestRowProjector(&base_, &projection, &projector);
+        } while (std::next_permutation(perm.begin(), perm.end()));
+      }
+    });
+  }
+  start.CountDown(kNumThreads);
+
+  for (auto& t : threads) {
+    t.join();
+  }
+}
+
+// This is a scenario to stress-test the generation of row projections' code.
+// The generated code isn't run, but just compiled and put into the codegen
+// cache. References to the generated code are being retained not only in the
+// cache but also kept around for time intervals of randomized durations.
+// The number and the order of columns in schemas and corresponding projections
+// are randomized as well.
+TEST_F(CodegenTest, CodegenRandomSchemas) {
+  SKIP_IF_SLOW_NOT_ALLOWED();
+
+  constexpr const size_t kNumThreads = 2;
+  constexpr const size_t kNumProjectionsPerSchema = 32;
+  constexpr const size_t kNumShufflesPerProjection = 16;
+
+  // Create 'library' of columns to build schemas for the test scenario.
+  const array<ColumnSchema, 31> cs_library{
+      ColumnSchema("key", INT64, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_bool", BOOL, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_bool_n", BOOL, ColumnSchema::NULLABLE),
+      ColumnSchema("c_int8", INT8, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_int8_n", INT8, ColumnSchema::NULLABLE),
+      ColumnSchema("c_int16", INT16, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_int16_n", INT16, ColumnSchema::NULLABLE),
+      ColumnSchema("c_int32", INT32, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_int32_n", INT32, ColumnSchema::NULLABLE),
+      ColumnSchema("c_int64", INT64, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_int64_n", INT64, ColumnSchema::NULLABLE),
+      ColumnSchema("c_str", STRING, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_str_n", STRING, ColumnSchema::NULLABLE),
+      ColumnSchema("c_bin", BINARY, ColumnSchema::NOT_NULL),
+      ColumnSchema("c_bin_n", BINARY, ColumnSchema::NULLABLE),
+      ColumnSchemaBuilder()
+          .name("c_int32_r")
+          .type(INT32)
+          .read_default(kI32R),
+      ColumnSchemaBuilder()
+          .name("c_int32_nr")
+          .type(INT32)
+          .nullable(true)
+          .read_default(kI32R),
+      ColumnSchemaBuilder()
+          .name("c_int32_rw")
+          .type(INT32)
+          .read_default(kI32R)
+          .write_default(kI32W),
+      ColumnSchemaBuilder()
+          .name("c_int32_nrw")
+          .type(INT32)
+          .nullable(true)
+          .read_default(kI32R)
+          .write_default(kI32W),
+      ColumnSchemaBuilder()
+          .name("c_int64_r")
+          .type(INT64)
+          .read_default(kI64R),
+      ColumnSchemaBuilder()
+          .name("c_int64_nr")
+          .type(INT64)
+          .nullable(true)
+          .read_default(kI64R),
+      ColumnSchemaBuilder()
+          .name("c_int64_rw")
+          .type(INT64)
+          .read_default(kI64R)
+          .write_default(kI64W),
+      ColumnSchemaBuilder()
+          .name("c_int64_nrw")
+          .type(INT64)
+          .nullable(true)
+          .read_default(kI64R)
+          .write_default(kI64W),
+      ColumnSchemaBuilder()
+          .name("c_str_r")
+          .type(STRING)
+          .read_default(kStrR),
+      ColumnSchemaBuilder()
+          .name("c_str_nr")
+          .type(STRING)
+          .nullable(true)
+          .read_default(kStrR),
+      ColumnSchemaBuilder()
+          .name("c_str_rw")
+          .type(STRING)
+          .read_default(kStrR)
+          .write_default(kStrW),
+      ColumnSchemaBuilder()
+          .name("c_str_nrw")
+          .type(STRING)
+          .nullable(true)
+          .read_default(kStrR)
+          .write_default(kStrW),
+      ColumnSchemaBuilder()
+          .name("c_bin_r")
+          .type(BINARY)
+          .read_default(kStrR),
+      ColumnSchemaBuilder()
+          .name("c_bin_nr")
+          .type(BINARY)
+          .nullable(true)
+          .read_default(kStrR),
+      ColumnSchemaBuilder()
+          .name("c_bin_rw")
+          .type(BINARY)
+          .read_default(kStrR)
+          .write_default(kStrW),
+      ColumnSchemaBuilder()
+          .name("c_bin_nrw")
+          .type(BINARY)
+          .nullable(true)
+          .read_default(kStrR)
+          .write_default(kStrW),
+  };
+
+  // A part of the codegenned projection code should fit into the cache, but
+  // make sure the elements are purged out of the cache from time to time.
+  FLAGS_codegen_cache_capacity =
+      kNumThreads * kNumProjectionsPerSchema * kNumShufflesPerProjection / 5;
+
+  // Make sure there is enough space in the codegen compilation queue to
+  // accommodate requests from all the running threads. Even if each of them
+  // waits for all currently running compilations to complete, they might
+  // race to submit their tasks, so add significant extra margin.
+  FLAGS_codegen_queue_capacity = 3 * kNumThreads;
+
+  Singleton<CompilationManager>::UnsafeReset();
+  CompilationManager* cm = CompilationManager::GetSingleton();
+
+  atomic<bool> stop = false;
+  vector<thread> threads;
+  threads.reserve(kNumThreads);
+  for (size_t thread_idx = 0; thread_idx < kNumThreads; ++thread_idx) {
+    threads.emplace_back([&, thread_idx = thread_idx]() {
+      std::mt19937 gen(SeedRandom());
+      list<unique_ptr<CodegenRP>> projectors;
+      while (!stop) {
+        // Choose a random number: it's the number of columns in the new schema.
+        const size_t num_columns = 1 + gen() % cs_library.size();
+        VLOG(1) << StringPrintf("thread %2zd: %2zd-column schema",
+                                  thread_idx, num_columns);
+        auto cs_library_first_non_key = cs_library.begin();
+        ++cs_library_first_non_key;
+        vector<ColumnSchema> column_schemas;
+        column_schemas.reserve(num_columns);
+        column_schemas.push_back(cs_library[0]); // the 'key' column is always present
+        sample(cs_library_first_non_key,
+               cs_library.end(),
+               back_inserter(column_schemas),
+               num_columns - 1,
+               gen);
+
+        // Create a schema with the given number of columns, picking columns
+        // from the 'column schema library' in random order.
+        SchemaBuilder sb;
+        for (const auto& cs : column_schemas) {
+          CHECK_OK(sb.AddColumn(cs));
+        }
+        const Schema schema = sb.Build();
+
+        // Generate various projections, using random subsets of columns
+        // in the schema.
+        for (size_t iter = 0; iter < kNumProjectionsPerSchema && !stop; ++iter) {
+          const size_t proj_col_num = 1 + gen() % column_schemas.size();
+          VLOG(2) << StringPrintf("thread %2zd: %2zd-column projection",
+                                  thread_idx, proj_col_num);
+          vector<ColumnId> col_ids;
+          col_ids.reserve(proj_col_num);
+
+          const auto& all_col_ids = schema.column_ids();
+          sample(all_col_ids.begin(),
+                 all_col_ids.end(),
+                 back_inserter(col_ids),
+                 proj_col_num,
+                 gen);
+          for (size_t s_idx = 0; s_idx < kNumShufflesPerProjection; ++s_idx) {
+            Schema projection;
+            // Shuffle the contents since std::sample is stable with the given
+            // vector's forward iterator.
+            if (s_idx != 0) {
+              std::shuffle(col_ids.begin(), col_ids.end(), gen);
+            }
+
+            // Create a projection with columns at the specified indices.
+            CHECK_OK(schema.CreateProjectionByIdsIgnoreMissing(col_ids, &projection));
+
+            // Request code generation.
+            unique_ptr<CodegenRP> projector;
+            if (cm->RequestRowProjector(&schema, &projection, &projector)) {
+              // If that's a codegenned projector, store it to keep a reference.
+              projectors.push_back(std::move(projector));
+            } else {
+              // Let the codegen compilation complete before going next cycle to
+              // avoid overflowing the codegen queue.
+              cm->Wait();
+            }
+          }
+
+          // Randomly purge some of the references to keep at most
+          // kNumProjectionsPerSchema between cycles in the 'projections'
+          // container.
+          size_t count = 0;
+          while (projectors.size() > kNumProjectionsPerSchema / 2) {
+            const size_t offset = gen() % projectors.size();
+            auto it = projectors.cbegin();
+            std::advance(it, offset);
+            projectors.erase(it);
+            ++count;
+          }
+          VLOG(2) << StringPrintf("thread %2zd: %4zd references dropped",
+                                  thread_idx, count);
+        }
+      }
+    });
+  }
+
+  // Let them run for at least for the specified time.
+  if (const int32 runtime_sec = FLAGS_codegen_test_random_schemas_runtime_sec;
+      runtime_sec >= 0) {
+    SleepFor(MonoDelta::FromSeconds(runtime_sec));
+    stop = true;
+  }
+  for (auto& t : threads) {
+    t.join();
   }
 }
 

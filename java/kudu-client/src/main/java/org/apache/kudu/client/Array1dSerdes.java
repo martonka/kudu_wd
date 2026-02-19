@@ -17,13 +17,15 @@
 
 package org.apache.kudu.client;
 
+import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Objects;
 
+import com.google.common.base.Preconditions;
+import com.google.flatbuffers.ByteVector;
 import com.google.flatbuffers.FlatBufferBuilder;
-import com.google.flatbuffers.Table;
 
 // FlatBuffers generated classes
 import org.apache.kudu.serdes.BinaryArray;
@@ -84,7 +86,31 @@ public class Array1dSerdes {
     if (validity == null || validity.length == 0) {
       return 0;
     }
-    return Content.createValidityVector(b, validity);
+    // If all elements are valid, the validity field isn't populated,
+    // similar to null and empty validity vectors.
+    boolean allValid = true;
+    for (boolean elem : validity) {
+      if (!elem) {
+        allValid = false;
+        break;
+      }
+    }
+    if (allValid) {
+      return 0;
+    }
+
+    // NOTE: java.util.BitSet is unusable here since it automatically
+    //   truncates all trailing zero bits after the last set bit
+    final int validityBitNum = validity.length;
+    final int validityByteNum = (validityBitNum + 7) / 8;
+    byte[] validityBytes = new byte[validityByteNum];
+    Arrays.fill(validityBytes, (byte)0);
+    for (int idx = 0; idx < validityBitNum; ++idx) {
+      if (validity[idx]) {
+        validityBytes[idx >> 3] |= (byte)(1 << (idx & 7));
+      }
+    }
+    return Content.createValidityVector(b, validityBytes);
   }
 
   private static int finishContent(FlatBufferBuilder b, int discriminator,
@@ -111,14 +137,32 @@ public class Array1dSerdes {
       Arrays.fill(validity, true);
       return validity;
     }
-    if (n != m) {
+
+    final int expected_validity_len = (m + 7) / 8;
+    if (n != expected_validity_len) {
       throw new IllegalArgumentException(
-          String.format("Invalid validity length %d (expected %d)", n, m));
+          String.format("invalid validity length %d: expected %d for %d elements in array",
+                        n, expected_validity_len, m));
     }
-    for (int i = 0; i < m; i++) {
-      validity[i] = c.validity(i);
+    final ByteVector vv = c.validityVector();
+    Preconditions.checkState(vv.length() == n,
+        "unexpected length of validityVector: %s (expected %s)", vv.length(), n);
+    for (int idx = 0; idx < m; ++idx) {
+      validity[idx] = ((vv.get(idx >> 3) & (1 << (idx & 7))) != 0);
     }
     return validity;
+  }
+
+  private static boolean hasNulls(Object[] values) {
+    if (values == null) {
+      return false;
+    }
+    for (Object v : values) {
+      if (v == null) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ---------------- Int8 ----------------
@@ -354,6 +398,14 @@ public class Array1dSerdes {
 
   // ---------------- String ----------------
   public static byte[] serializeString(String[] values, boolean[] validity) {
+    // If validity is omitted, data must not contain nulls. If not,
+    // the serializer can't differentiate null from an empty value.
+    if (validity == null || validity.length == 0) {
+      if (hasNulls(values)) {
+        throw new IllegalArgumentException(
+            "Empty validity vector not allowed when values contain nulls");
+      }
+    }
     FlatBufferBuilder b = new FlatBufferBuilder();
     int[] offs = new int[values.length];
     for (int i = 0; i < values.length; i++) {
@@ -391,6 +443,14 @@ public class Array1dSerdes {
 
   // ---------------- Binary ----------------
   public static byte[] serializeBinary(byte[][] values, boolean[] validity) {
+    // If validity is omitted, data must not contain nulls. If not,
+    // the serializer can't differentiate null from an empty value.
+    if (validity == null || validity.length == 0) {
+      if (hasNulls(values)) {
+        throw new IllegalArgumentException(
+            "Empty validity vector not allowed when values contain nulls");
+      }
+    }
     FlatBufferBuilder b = new FlatBufferBuilder();
     int[] elemOffs = new int[values.length];
     for (int i = 0; i < values.length; i++) {
@@ -432,11 +492,20 @@ public class Array1dSerdes {
       CreateVec<V> createVec, Start start, AddValues addValues, End end) {
 
     if (values != null && validity != null) {
-      int valueLen = java.lang.reflect.Array.getLength(values);
-      if (validity.length != valueLen) {
+      int valueLen = Array.getLength(values);
+      if (validity.length != 0 && validity.length != valueLen) {
         throw new IllegalArgumentException(
             String.format("Validity length %d does not match values length %d",
                 validity.length, valueLen));
+      }
+      if (validity.length == 0) {
+        for (int i = 0; i < valueLen; i++) {
+          Object elem = Array.get(values, i);
+          if (elem == null) {
+            throw new IllegalArgumentException(
+                String.format("Empty validity vector provided, but values[%d] is null", i));
+          }
+        }
       }
     }
 

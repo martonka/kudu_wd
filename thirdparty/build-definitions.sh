@@ -118,24 +118,58 @@ build_cmake() {
   popd
 }
 
-build_libcxxabi() {
-  LIBCXXABI_BDIR=$TP_BUILD_DIR/llvm-$LLVM_VERSION.libcxxabi$MODE_SUFFIX
-  mkdir -p $LIBCXXABI_BDIR
-  pushd $LIBCXXABI_BDIR
+build_libcxx_and_libcxxabi() {
+  LIBCXX_BDIR=$TP_BUILD_DIR/llvm-$LLVM_VERSION.libcxx_and_abi$MODE_SUFFIX
+  mkdir -p $LIBCXX_BDIR
+  pushd $LIBCXX_BDIR
   rm -Rf CMakeCache.txt CMakeFiles/
+  LIBCXX_EXTRA_CMAKE_FLAGS=$EXTRA_CMAKE_FLAGS
+  local BUILD_TYPE=$1
+  case $BUILD_TYPE in
+    "normal")
+      # ubuntu 18.04 default g++ is no longer sufficient for libc++
+      if echo -e "#if __cplusplus < 202002L\n#error no C++20\n#endif\nint main() {}" \
+        | ${CXX:-g++} -std=c++20 -x c++ - -o /dev/null >/dev/null 2>&1
+      then
+        echo "compiler supports c++20"
+      else
+        LIBCXX_EXTRA_CMAKE_FLAGS="$EXTRA_CMAKE_FLAGS -DCMAKE_C_COMPILER=$CLANG \
+          -DCMAKE_CXX_COMPILER=$CLANGXX "
+        echo "Compiler too old, using $CLANGXX to build libc++"
+      fi
+      SANITIZER_ARG=
+      ;;
+    "tsan")
+      SANITIZER_ARG="-DLLVM_USE_SANITIZER=Thread"
+      ;;
+    *)
+      echo "Unknown build type: $BUILD_TYPE"
+      exit 1
+      ;;
+  esac
 
   cmake \
+    -S $LLVM_SOURCE/runtimes \
+    -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DCMAKE_CXX_FLAGS="$EXTRA_CXXFLAGS $EXTRA_LDFLAGS" \
-    -DLLVM_PATH=$LLVM_SOURCE \
-    $EXTRA_CMAKE_FLAGS \
-    $LLVM_SOURCE/projects/libcxxabi
-  ${NINJA:-make} -j$PARALLEL $EXTRA_MAKEFLAGS install
+    -DCMAKE_EXE_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+    -DCMAKE_MODULE_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+    -DCMAKE_SHARED_LINKER_FLAGS="$EXTRA_LDFLAGS" \
+    -DLIBCXX_INCLUDE_TESTS=OFF \
+    -DLIBCXX_INCLUDE_BENCHMARKS=OFF \
+    -DLIBCXXABI_INCLUDE_TESTS=OFF \
+    -DCMAKE_C_COMPILER=$CLANG -DCMAKE_CXX_COMPILER=$CLANGXX \
+    $LIBCXX_EXTRA_CMAKE_FLAGS \
+    -B .
+
+  ${NINJA:-make} -j$PARALLEL $EXTRA_MAKEFLAGS cxx cxxabi install-cxx install-cxxabi
   popd
 }
 
 build_libcxx() {
+  return
   local BUILD_TYPE=$1
   case $BUILD_TYPE in
     "normal")
@@ -163,11 +197,11 @@ build_libcxx() {
     -DCMAKE_SHARED_LINKER_FLAGS="$EXTRA_LDFLAGS" \
     -DLLVM_PATH=$LLVM_SOURCE \
     -DLIBCXX_CXX_ABI=libcxxabi \
-    -DLIBCXX_CXX_ABI_INCLUDE_PATHS=$LLVM_SOURCE/projects/libcxxabi/include \
+    -DLIBCXX_CXX_ABI_INCLUDE_PATHS=$LLVM_SOURCE/libcxxabi/include \
     -DLIBCXX_CXX_ABI_LIBRARY_PATH=$PREFIX/lib \
     $SANITIZER_ARG \
     $EXTRA_CMAKE_FLAGS \
-    $LLVM_SOURCE/projects/libcxx
+    $LLVM_SOURCE/libcxx
   ${NINJA:-make} -j$PARALLEL $EXTRA_MAKEFLAGS install
   popd
 }
@@ -197,86 +231,22 @@ build_or_find_python() {
 }
 
 build_llvm() {
-  local TOOLS_ARGS=
+  local CMAKE_ARGS=
   local BUILD_TYPE=$1
 
-  build_or_find_python
-
-  # Always disabled; these subprojects are built standalone.
-  TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_LIBCXX_BUILD=OFF"
-  TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_LIBCXXABI_BUILD=OFF"
-
-  # Disable some builds we don't care about.
+  # Disable extras we don't need.
   for arg in \
-      CLANG_ENABLE_ARCMT \
-      CLANG_TOOL_ARCMT_TEST_BUILD \
-      CLANG_TOOL_C_ARCMT_TEST_BUILD \
-      CLANG_TOOL_C_INDEX_TEST_BUILD \
-      CLANG_TOOL_CLANG_CHECK_BUILD \
-      CLANG_TOOL_CLANG_DIFF_BUILD \
-      CLANG_TOOL_CLANG_FORMAT_VS_BUILD \
-      CLANG_TOOL_CLANG_FUZZER_BUILD \
-      CLANG_TOOL_CLANG_IMPORT_TEST_BUILD \
-      CLANG_TOOL_CLANG_OFFLOAD_BUNDLER_BUILD \
-      CLANG_TOOL_CLANG_REFACTOR_BUILD \
-      CLANG_TOOL_CLANG_RENAME_BUILD \
-      CLANG_TOOL_DIAGTOOL_BUILD \
-      COMPILER_RT_BUILD_LIBFUZZER \
-      COMPILER_RT_INCLUDE_TESTS \
-      LLVM_BUILD_BENCHMARKS \
-      LLVM_ENABLE_OCAMLDOC \
-      LLVM_INCLUDE_BENCHMARKS \
-      LLVM_INCLUDE_GO_TESTS \
-      LLVM_POLLY_BUILD \
-      LLVM_TOOL_BUGPOINT_BUILD \
-      LLVM_TOOL_BUGPOINT_PASSES_BUILD \
-      LLVM_TOOL_DSYMUTIL_BUILD \
-      LLVM_TOOL_LLI_BUILD \
-      LLVM_TOOL_LLVM_AS_FUZZER_BUILD \
-      LLVM_TOOL_LLVM_BCANALYZER_BUILD \
-      LLVM_TOOL_LLVM_CAT_BUILD \
-      LLVM_TOOL_LLVM_CFI_VERIFY_BUILD \
-      LLVM_TOOL_LLVM_C_TEST_BUILD \
-      LLVM_TOOL_LLVM_CVTRES_BUILD \
-      LLVM_TOOL_LLVM_CXXDUMP_BUILD \
-      LLVM_TOOL_LLVM_CXXFILT_BUILD \
-      LLVM_TOOL_LLVM_DIFF_BUILD \
-      LLVM_TOOL_LLVM_DIS_BUILD \
-      LLVM_TOOL_LLVM_DWARFDUMP_BUILD \
-      LLVM_TOOL_LLVM_DWP_BUILD \
-      LLVM_TOOL_LLVM_EXTRACT_BUILD \
-      LLVM_TOOL_LLVM_GO_BUILD \
-      LLVM_TOOL_LLVM_ISEL_FUZZER_BUILD \
-      LLVM_TOOL_LLVM_JITLISTENER_BUILD \
-      LLVM_TOOL_LLVM_MC_ASSEMBLE_FUZZER_BUILD \
-      LLVM_TOOL_LLVM_MC_BUILD \
-      LLVM_TOOL_LLVM_MC_DISASSEMBLE_FUZZER_BUILD \
-      LLVM_TOOL_LLVM_MODEXTRACT_BUILD \
-      LLVM_TOOL_LLVM_MT_BUILD \
-      LLVM_TOOL_LLVM_NM_BUILD \
-      LLVM_TOOL_LLVM_OBJCOPY_BUILD \
-      LLVM_TOOL_LLVM_OBJDUMP_BUILD \
-      LLVM_TOOL_LLVM_OPT_FUZZER_BUILD \
-      LLVM_TOOL_LLVM_OPT_REPORT_BUILD \
-      LLVM_TOOL_LLVM_PDBUTIL_BUILD \
-      LLVM_TOOL_LLVM_PROFDATA_BUILD \
-      LLVM_TOOL_LLVM_RC_BUILD \
-      LLVM_TOOL_LLVM_READOBJ_BUILD \
-      LLVM_TOOL_LLVM_RTDYLD_BUILD \
-      LLVM_TOOL_LLVM_SHLIB_BUILD \
-      LLVM_TOOL_LLVM_SIZE_BUILD \
-      LLVM_TOOL_LLVM_SPECIAL_CASE_LIST_FUZZER_BUILD \
-      LLVM_TOOL_LLVM_SPLIT_BUILD \
-      LLVM_TOOL_LLVM_STRESS_BUILD \
-      LLVM_TOOL_LLVM_STRINGS_BUILD \
-      LLVM_TOOL_OBJ2YAML_BUILD \
-      LLVM_TOOL_OPT_BUILD \
-      LLVM_TOOL_OPT_VIEWER_BUILD \
-      LLVM_TOOL_VERIFY_USELISTORDER_BUILD \
-      LLVM_TOOL_XCODE_TOOLCHAIN_BUILD \
-      LLVM_TOOL_YAML2OBJ_BUILD \
-      ; do
-    TOOLS_ARGS="$TOOLS_ARGS -D${arg}=OFF"
+    LLVM_INCLUDE_TESTS \
+    LLVM_INCLUDE_BENCHMARKS \
+    LLVM_BUILD_BENCHMARKS \
+    LLVM_INCLUDE_EXAMPLES \
+    LLVM_INCLUDE_DOCS \
+    LLVM_ENABLE_OCAMLDOC \
+    CLANG_ENABLE_ARCMT \
+    CLANG_ENABLE_STATIC_ANALYZER \
+    COMPILER_RT_BUILD_LIBFUZZER
+  do
+    CMAKE_ARGS="$CMAKE_ARGS -D${arg}=OFF"
   done
 
   CLANG_CXXFLAGS="$EXTRA_CXXFLAGS"
@@ -296,35 +266,43 @@ build_llvm() {
       # coming from devtoolset-6.
       GCC_INSTALL_PREFIX=$(gcc -v 2>&1 | grep -o -- '--prefix=[^ ]*' | cut -f2 -d=)
       if [ -n "$GCC_INSTALL_PREFIX" ]; then
-        TOOLS_ARGS="$TOOLS_ARGS -DGCC_INSTALL_PREFIX=$GCC_INSTALL_PREFIX"
+        CMAKE_ARGS="$CMAKE_ARGS -DGCC_INSTALL_PREFIX=$GCC_INSTALL_PREFIX"
       fi
 
+      # per-file LLVM_TOOL_* flags are gone.
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_BUILD_TOOLS=ON"
+
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_RUNTIMES=libc;compiler-rt"
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_PROJECTS=clang;lld"
+
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TOOL_LLVM_SYMBOLIZER_BUILD=ON"
       if [ -n "$OS_OSX" ]; then
         # Xcode 12.2 fails to build the sanitizers and they are not needed.
         # We disable them as a workaround to the build issues.
         # Disable the sanitizers and xray to prevent sanitizer_common compilation.
         # See https://github.com/llvm-mirror/compiler-rt/blob/749af53928a31afa3111f27cc41fd15849d86667/lib/CMakeLists.txt#L11-L14
-        TOOLS_ARGS="$TOOLS_ARGS -DCOMPILER_RT_BUILD_SANITIZERS=OFF"
-        TOOLS_ARGS="$TOOLS_ARGS -DCOMPILER_RT_BUILD_XRAY=OFF"
+        CMAKE_ARGS="$CMAKE_ARGS -DCOMPILER_RT_BUILD_SANITIZERS=OFF"
+        CMAKE_ARGS="$CMAKE_ARGS -DCOMPILER_RT_BUILD_XRAY=OFF"
 
         # Disable Apple platforms the we do not support.
-        TOOLS_ARGS="$TOOLS_ARGS -DCOMPILER_RT_ENABLE_IOS=OFF"
-        TOOLS_ARGS="$TOOLS_ARGS -DCOMPILER_RT_ENABLE_WATCHOS=OFF"
-        TOOLS_ARGS="$TOOLS_ARGS -DCOMPILER_RT_ENABLE_TVOS=OFF"
+        CMAKE_ARGS="$CMAKE_ARGS -DCOMPILER_RT_ENABLE_IOS=OFF"
+        CMAKE_ARGS="$CMAKE_ARGS -DCOMPILER_RT_ENABLE_WATCHOS=OFF"
+        CMAKE_ARGS="$CMAKE_ARGS -DCOMPILER_RT_ENABLE_TVOS=OFF"
       fi
 
       ;;
     "tsan")
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_BUILD_TOOLS=OFF"
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_RUNTIMES=libc;libcxx;libcxxabi"
       # Build just the core LLVM libraries, dependent on libc++.
-      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_ENABLE_LIBCXX=ON"
-      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_INCLUDE_TOOLS=OFF"
-      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TOOL_COMPILER_RT_BUILD=OFF"
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_ENABLE_LIBCXX=ON"
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_BUILD_TOOLS=OFF"
 
       # Configure for TSAN.
-      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_USE_SANITIZER=Thread"
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_USE_SANITIZER=Thread"
       # Use the 'tblgen' from the non-TSAN build when building the TSAN
       # build, since it runs much faster.
-      TOOLS_ARGS="$TOOLS_ARGS -DLLVM_TABLEGEN=$PREFIX_DEPS/bin/llvm-tblgen"
+      CMAKE_ARGS="$CMAKE_ARGS -DLLVM_TABLEGEN=$PREFIX_DEPS/bin/llvm-tblgen"
       ;;
     *)
       echo "Unknown LLVM build type: $BUILD_TYPE"
@@ -351,20 +329,16 @@ build_llvm() {
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DLLVM_TEMPORARILY_ALLOW_OLD_TOOLCHAIN=ON \
-    -DLLVM_INCLUDE_DOCS=OFF \
-    -DLLVM_INCLUDE_EXAMPLES=OFF \
-    -DLLVM_INCLUDE_TESTS=OFF \
-    -DLLVM_INCLUDE_UTILS=OFF \
     -DLLVM_TARGETS_TO_BUILD=host \
     -DLLVM_ENABLE_RTTI=ON \
     -DCMAKE_CXX_FLAGS="$CLANG_CXXFLAGS" \
     -DCMAKE_EXE_LINKER_FLAGS="$CLANG_LDFLAGS" \
     -DCMAKE_MODULE_LINKER_FLAGS="$CLANG_LDFLAGS" \
     -DCMAKE_SHARED_LINKER_FLAGS="$CLANG_LDFLAGS" \
-    -DPYTHON_EXECUTABLE=$PYTHON_EXECUTABLE \
-    $TOOLS_ARGS \
+    -DPython3_EXECUTABLE=$PYTHON_EXECUTABLE \
+    $CMAKE_ARGS \
     $EXTRA_CMAKE_FLAGS \
-    $LLVM_SOURCE
+    $LLVM_SOURCE/llvm
 
   # Retry the build a few times. Thanks to an LLVM bug[1], the build can fail
   # sporadically when using certain values of $PARALLEL.

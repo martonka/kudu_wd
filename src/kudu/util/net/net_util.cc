@@ -145,7 +145,7 @@ Status GetAddrInfo(const string& hostname,
   if (rc == EAI_SYSTEM) {
     return Status::NetworkError(err_msg, ErrnoToString(err), err);
   }
-  return Status::NetworkError(err_msg, gai_strerror(rc));
+  return Status::NetworkError(err_msg, gai_strerror(rc), rc);
 }
 
 // Converts the given Sockaddr into a HostPort, substituting the FQDN
@@ -181,6 +181,17 @@ Status ParseIPModeFlag(const string& flag_value, IPMode* mode) {
                    flag_value));
   }
   return Status::OK();
+}
+
+const char* IPModeToString(IPMode mode) {
+  switch (mode) {
+    case IPMode::DUAL:
+      return "dual";
+    case IPMode::IPV6:
+      return "ipv6";
+    default:
+      return "ipv4";
+  }
 }
 
 sa_family_t GetIPFamily() {

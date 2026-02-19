@@ -155,6 +155,7 @@ void BitmapCopy(uint8_t* dst, size_t dst_offset,
 }
 
 vector<bool> BitmapToVector(const uint8_t* bitmap, size_t num_bits) {
+  DCHECK(bitmap);
   BitmapIterator it(bitmap, num_bits);
   vector<bool> result(num_bits);
   bool is_set = false;
@@ -166,6 +167,19 @@ vector<bool> BitmapToVector(const uint8_t* bitmap, size_t num_bits) {
     offset += num_elem;
   }
   return result;
+}
+
+size_t VectorToBitmap(const std::vector<bool>& v, uint8_t* bitmap) {
+  DCHECK(bitmap);
+  const size_t num_bits = v.size();
+  for (size_t idx = 0; idx < num_bits; ++idx) {
+    if (v[idx]) {
+      BitmapSet(bitmap, idx);
+    } else {
+      BitmapClear(bitmap, idx);
+    }
+  }
+  return num_bits;
 }
 
 string BitmapToString(const uint8_t* bitmap, size_t num_bits) {

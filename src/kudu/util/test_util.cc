@@ -273,7 +273,7 @@ int SeedRandom() {
   } else {
     seed = FLAGS_test_random_seed;
   }
-  LOG(INFO) << "Using random seed: " << seed;
+  VLOG(1) << "Using random seed: " << seed;
   srand(seed);
   return seed;
 }
@@ -758,4 +758,10 @@ void CheckPrometheusOutput(const string& prometheus_output) {
     }
   }
 }
+
+std::ostream& operator<<(std::ostream& os, const IPMode& mode) {
+  os << IPModeToString(mode);
+  return os;
+}
+
 } // namespace kudu

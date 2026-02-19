@@ -22,30 +22,60 @@ import static org.apache.kudu.test.ClientTestUtil.getSchemaWithAllTypes;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.Arrays;
+import java.util.function.IntFunction;
 
 import org.junit.Rule;
 import org.junit.Test;
 
 import org.apache.kudu.ColumnSchema;
+import org.apache.kudu.ColumnTypeAttributes;
 import org.apache.kudu.Schema;
 import org.apache.kudu.Type;
 import org.apache.kudu.test.junit.RetryRule;
 import org.apache.kudu.util.DateUtil;
+import org.apache.kudu.util.TimestampUtil;
 
 public class TestPartialRow {
 
   @Rule
   public RetryRule retryRule = new RetryRule();
+
+  // For when getArrayData() returns decoded typed arrays (e.g., Short[], Float[], etc.)
+  private static <T> void assertArrayDataEquals(
+      ArrayCellView view, Object data, IntFunction<T> elementGetter) {
+    assertNotNull("getArrayData() returned null", data);
+    assertTrue("Expected array but got " + data.getClass(), data.getClass().isArray());
+
+    Object[] boxed = (Object[]) data;
+    assertEquals("Array lengths differ", view.length(), boxed.length);
+
+    for (int i = 0; i < boxed.length; i++) {
+      if (view.isValid(i)) {
+        T expected = elementGetter.apply(i);
+        Object actual = boxed[i];
+        if (expected instanceof byte[] && actual instanceof byte[]) {
+          assertArrayEquals("Mismatch at index " + i, (byte[]) expected, (byte[]) actual);
+        } else {
+          assertEquals("Mismatch at index " + i, expected, actual);
+        }
+      } else {
+        assertNull("Expected null at index " + i, boxed[i]);
+      }
+    }
+  }
+
 
   @Test
   public void testGetters() {
@@ -141,6 +171,403 @@ public class TestPartialRow {
           callGetByName(row, col.getName(), col.getType()));
     }
   }
+
+  @Test
+  public void testAddAndGetInt8Array() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("ints", Type.INT8).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    byte[] vals = {42, -5, 100};
+    boolean[] validity = {true, true, true};
+    row.addArrayInt8("ints", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("ints");
+    assertEquals(3, view.length());
+    assertEquals(42, view.getInt8(0));
+    assertEquals(-5, view.getInt8(1));
+    assertEquals(100, view.getInt8(2));
+
+    assertArrayDataEquals(view, row.getArrayData("ints"), view::getInt8);
+  }
+
+  @Test
+  public void testAddAndGetInt8ArrayAllNulls() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("tiny_ints", Type.INT8).array(true).build()
+    ));
+
+    // Test various number of NULL elements in the array to check various boundary
+    // conditions on the internal representation of the validity vector in ArrayCellView.
+    final int[] numberOfElements = new int[]{ 0, 1, 3, 7, 8, 9, 100, 127};
+    for (int elemNum : numberOfElements) {
+      PartialRow row = schema.newPartialRow();
+
+      byte[] vals = new byte[elemNum];
+      Arrays.fill(vals, (byte)0);
+
+      boolean[] validity = new boolean[elemNum];
+      Arrays.fill(validity, false);
+
+      row.addArrayInt8("tiny_ints", vals, validity);
+
+      ArrayCellView view = (ArrayCellView) row.getObject("tiny_ints");
+      assertEquals(elemNum, view.length());
+      for (int idx = 0; idx < elemNum; ++idx) {
+        assertFalse("elemNum: " + elemNum + " idx: " + idx, view.isValid(idx));
+      }
+    }
+  }
+
+  @Test
+  public void testAddAndGetInt16Array() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("ints16", Type.INT16).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    short[] vals = {123, -456, 789};
+    boolean[] validity = {true, true, true};
+    row.addArrayInt16("ints16", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("ints16");
+    assertEquals(3, view.length());
+    assertEquals((short) 123, view.getInt16(0));
+    assertEquals((short) -456, view.getInt16(1));
+    assertEquals((short) 789, view.getInt16(2));
+
+    assertArrayDataEquals(view, row.getArrayData("ints16"), view::getInt16);
+  }
+
+  @Test
+  public void testAddAndGetInt32Array() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("ints32", Type.INT32).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    int[] vals = {1, -2, 3};
+    boolean[] validity = {true, true, true};
+    row.addArrayInt32("ints32", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("ints32");
+    assertEquals(3, view.length());
+    assertEquals(1, view.getInt32(0));
+    assertEquals(-2, view.getInt32(1));
+    assertEquals(3, view.getInt32(2));
+
+    assertArrayDataEquals(view, row.getArrayData("ints32"), view::getInt32);
+  }
+
+  @Test
+  public void testAddAndGetInt64Array() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("ints64", Type.INT64).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    long[] vals = {1L, -2L, 3L};
+    boolean[] validity = {true, true, true};
+    row.addArrayInt64("ints64", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("ints64");
+    assertEquals(3, view.length());
+    assertEquals(1L, view.getInt64(0));
+    assertEquals(-2L, view.getInt64(1));
+    assertEquals(3L, view.getInt64(2));
+
+    assertArrayDataEquals(view, row.getArrayData("ints64"), view::getInt64);
+
+  }
+
+  @Test
+  public void testAddAndGetFloatArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("floats", Type.FLOAT).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    float[] vals = {1.5f, 2.5f};
+    boolean[] validity = {true, true};
+    row.addArrayFloat("floats", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("floats");
+    assertEquals(2, view.length());
+    assertEquals(1.5f, view.getFloat(0), 0.0f);
+    assertEquals(2.5f, view.getFloat(1), 0.0f);
+
+    assertArrayDataEquals(view, row.getArrayData("floats"), view::getFloat);
+  }
+
+  @Test
+  public void testAddAndGetDoubleArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("doubles", Type.DOUBLE).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    double[] vals = {1.1, 2.2};
+    boolean[] validity = {true, true};
+    row.addArrayDouble("doubles", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("doubles");
+    assertEquals(2, view.length());
+    assertEquals(1.1, view.getDouble(0), 0.0);
+    assertEquals(2.2, view.getDouble(1), 0.0);
+
+    assertArrayDataEquals(view, row.getArrayData("doubles"), view::getDouble);
+  }
+
+  @Test
+  public void testAddAndGetStringArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("strings", Type.STRING).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    String[] vals = {"foo", null, "bar"};
+    boolean[] validity = {true, false, true};
+    row.addArrayString("strings", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("strings");
+    assertEquals(3, view.length());
+    assertEquals("foo", view.getString(0));
+    assertFalse(view.isValid(1));
+    assertEquals("bar", view.getString(2));
+
+    assertArrayDataEquals(view, row.getArrayData("strings"), view::getString);
+  }
+
+  @Test
+  public void testAddAndGetBinaryArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("binaries", Type.BINARY).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    byte[][] vals = { {1,2}, {3,4,5} };
+    boolean[] validity = {true, true};
+    row.addArrayBinary("binaries", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("binaries");
+    assertEquals(2, view.length());
+    assertArrayEquals(new byte[]{1,2}, view.getBinary(0));
+    assertArrayEquals(new byte[]{3,4,5}, view.getBinary(1));
+
+    assertArrayDataEquals(view, row.getArrayData("binaries"), view::getBinary);
+  }
+
+  @Test
+  public void testAddAndGetBoolArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("bools", Type.BOOL).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    boolean[] vals = {true, false, true};
+    boolean[] validity = {true, true, true};
+    row.addArrayBool("bools", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("bools");
+    assertEquals(3, view.length());
+    assertTrue(view.getBoolean(0));
+    assertFalse(view.getBoolean(1));
+    assertTrue(view.getBoolean(2));
+
+    assertArrayDataEquals(view, row.getArrayData("bools"), view::getBoolean);
+  }
+
+  @Test
+  public void testAddAndGetDateArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("dates", Type.DATE).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    Date[] vals = { Date.valueOf("2020-01-01"), null, Date.valueOf("2020-01-03") };
+    row.addArrayDate("dates", vals);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("dates");
+    assertEquals(3, view.length());
+
+    int days0 = view.getInt32(0);
+    assertEquals(vals[0], DateUtil.epochDaysToSqlDate(days0));
+
+    assertFalse(view.isValid(1));
+
+    int days2 = view.getInt32(2);
+    assertEquals(vals[2], DateUtil.epochDaysToSqlDate(days2));
+
+    assertArrayDataEquals(view, row.getArrayData("dates"),
+        i -> DateUtil.epochDaysToSqlDate(view.getInt32(i)));
+  }
+
+  @Test
+  public void testAddAndGetTimestampArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("times", Type.UNIXTIME_MICROS).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    Timestamp[] vals = {
+        Timestamp.valueOf("2021-01-01 00:00:00"),
+        null,
+        Timestamp.valueOf("2021-01-01 12:34:56")
+    };
+    row.addArrayTimestamp("times", vals);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("times");
+    assertEquals(3, view.length());
+
+    long micros0 = view.getInt64(0);
+    long millis0 = micros0 / 1000;
+    int nanos0 = (int) (micros0 % 1_000_000) * 1000;
+    Timestamp ts0 = new Timestamp(millis0);
+    ts0.setNanos(ts0.getNanos() + nanos0);
+    assertEquals(vals[0], ts0);
+
+    assertFalse(view.isValid(1));
+
+    long micros2 = view.getInt64(2);
+    long millis2 = micros2 / 1000;
+    int nanos2 = (int) (micros2 % 1_000_000) * 1000;
+    Timestamp ts2 = new Timestamp(millis2);
+    ts2.setNanos(ts2.getNanos() + nanos2);
+    assertEquals(vals[2], ts2);
+
+    assertArrayDataEquals(view, row.getArrayData("times"),
+        i -> TimestampUtil.microsToTimestamp(view.getInt64(i)));
+  }
+
+  @Test
+  public void testAddAndGetVarcharArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("varchars", Type.VARCHAR)
+            .typeAttributes(new ColumnTypeAttributes.ColumnTypeAttributesBuilder()
+                .length(5).build())
+            .array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    String[] vals = {"abcdef", "xy", null};
+    row.addArrayVarchar("varchars", vals);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("varchars");
+    assertEquals(3, view.length());
+    assertEquals("abcde", view.getString(0));
+    assertEquals("xy", view.getString(1));
+    assertFalse(view.isValid(2));
+
+    assertArrayDataEquals(view, row.getArrayData("varchars"), view::getString);
+  }
+
+  @Test
+  public void testAddAndGetDecimalArray() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("decimals", Type.DECIMAL)
+            .typeAttributes(new ColumnTypeAttributes.ColumnTypeAttributesBuilder()
+                .precision(10).scale(2).build())
+            .array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    BigDecimal[] vals = { new BigDecimal("123.45"), null, new BigDecimal("67.89") };
+    boolean[] validity = {true, false, true};
+    row.addArrayDecimal("decimals", vals, validity);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("decimals");
+    assertEquals(3, view.length());
+
+    int scale = schema.getColumnByIndex(0).getTypeAttributes().getScale();
+
+    long unscaled0 = view.getInt64(0);
+    assertEquals(vals[0], new BigDecimal(BigInteger.valueOf(unscaled0), scale));
+    assertFalse(view.isValid(1));
+    long unscaled2 = view.getInt64(2);
+    assertEquals(vals[2], new BigDecimal(BigInteger.valueOf(unscaled2), scale));
+
+    assertArrayDataEquals(view, row.getArrayData("decimals"),
+        i -> new BigDecimal(BigInteger.valueOf(view.getInt64(i)), scale));
+  }
+
+  @Test
+  public void testAddArrayInt32WithEmptyValidity() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("ints32", Type.INT32).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    int[] vals = {10, 20, 30};
+    boolean[] validity = new boolean[0];
+
+    row.addArrayInt32("ints32", vals, validity);
+
+    ArrayCellView view =  (ArrayCellView) row.getObject("ints32");
+    assertEquals(3, view.length());
+    for (int i = 0; i < view.length(); i++) {
+      assertTrue(view.isValid(i));
+      assertEquals(vals[i], view.getInt32(i));
+    }
+  }
+
+  @Test
+  public void testAddArrayStringWithEmptyValidityAllValid() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("strings", Type.STRING).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    String[] vals = {"a", "b", "c"};
+    row.addArrayString("strings", vals, new boolean[0]);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("strings");
+    assertEquals(3, view.length());
+    for (int i = 0; i < 3; i++) {
+      assertTrue(view.isValid(i));
+      assertEquals(vals[i], view.getString(i));
+    }
+  }
+
+
+  @Test
+  public void testAddArrayBinaryWithEmptyValidityAllValid() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("binaries", Type.BINARY).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    byte[][] vals = { {1,2}, {3,4} };
+    row.addArrayBinary("binaries", vals, new boolean[0]);
+
+    ArrayCellView view = (ArrayCellView) row.getObject("binaries");
+    assertEquals(2, view.length());
+    assertArrayEquals(vals[0], view.getBinary(0));
+    assertArrayEquals(vals[1], view.getBinary(1));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testAddArrayStringEmptyValidityWithNullsRejected() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("strings", Type.STRING).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    String[] vals = {"a", null, "b"};
+    row.addArrayString("strings", vals, new boolean[0]); // should throw
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testAddArrayBinaryEmptyValidityWithNullsRejected() {
+    Schema schema = new Schema(Arrays.asList(
+        new ColumnSchema.ColumnSchemaBuilder("binaries", Type.BINARY).array(true).build()
+    ));
+    PartialRow row = schema.newPartialRow();
+
+    byte[][] vals = { {1,2}, null, {3} };
+    row.addArrayBinary("binaries", vals, new boolean[0]); // should throw
+  }
+
 
   @Test(expected = IllegalArgumentException.class)
   public void testGetNullColumn() {

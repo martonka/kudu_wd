@@ -33,7 +33,7 @@
 namespace kudu {
 
 // Return the number of bytes necessary to store the given number of bits.
-inline size_t BitmapSize(size_t num_bits) {
+constexpr size_t BitmapSize(size_t num_bits) {
   return (num_bits + 7) / 8;
 }
 
@@ -126,6 +126,7 @@ void BitmapCopy(uint8_t* dst, size_t dst_offset,
                 size_t num_bits);
 
 std::vector<bool> BitmapToVector(const uint8_t* bitmap, size_t num_bits);
+size_t VectorToBitmap(const std::vector<bool>& v, uint8_t* bitmap);
 
 std::string BitmapToString(const uint8_t* bitmap, size_t num_bits);
 
@@ -141,8 +142,8 @@ class BitmapIterator {
  public:
   BitmapIterator(const uint8_t* map, size_t num_bits)
       : map_(map),
-        offset_(0),
-        num_bits_(num_bits) {
+        num_bits_(num_bits),
+        offset_(0) {
   }
 
   size_t Next(bool* value) {
@@ -150,6 +151,13 @@ class BitmapIterator {
     size_t len = num_bits_ - offset_;
     if (PREDICT_FALSE(len == 0)) {
       return 0;
+    }
+
+    if (!map_) {
+      // Null bitmap means all the elements are valid.
+      *value = true;
+      offset_ = num_bits_;
+      return num_bits_;
     }
 
     *value = BitmapTest(map_, offset_);
@@ -167,8 +175,8 @@ class BitmapIterator {
 
  private:
   const uint8_t* const map_;
+  const size_t num_bits_;
   size_t offset_;
-  size_t num_bits_;
 };
 
 // Iterate over the bits in 'bitmap' and call 'func' for each set bit.
