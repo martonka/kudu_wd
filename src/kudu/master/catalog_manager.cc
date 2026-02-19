@@ -117,6 +117,7 @@
 #include "kudu/rpc/remote_user.h"
 #include "kudu/rpc/rpc_context.h"
 #include "kudu/rpc/rpc_controller.h"
+#include "kudu/rpc/rpc_header.pb.h"
 #include "kudu/security/cert.h"
 #include "kudu/security/crypto.h"
 #include "kudu/security/tls_context.h"
@@ -322,6 +323,12 @@ DEFINE_bool(catalog_manager_support_live_row_count, true,
 TAG_FLAG(catalog_manager_support_live_row_count, hidden);
 TAG_FLAG(catalog_manager_support_live_row_count, runtime);
 
+DEFINE_bool(catalog_manager_retry_tserver_task_on_unsupported_feature_flags, false,
+            "Whether to retry tasks that send asynchronous RPCs to tablet "
+            "servers if receiving unsupported feature flags error");
+TAG_FLAG(catalog_manager_retry_tserver_task_on_unsupported_feature_flags, advanced);
+TAG_FLAG(catalog_manager_retry_tserver_task_on_unsupported_feature_flags, runtime);
+
 DEFINE_bool(catalog_manager_enable_chunked_tablet_reports, true,
             "Whether to split the tablet report data received from one tablet "
             "server into chunks when persisting it in the system catalog. "
@@ -492,6 +499,7 @@ using kudu::tablet::TabletDataState;
 using kudu::tablet::TabletReplica;
 using kudu::tablet::TabletStatePB;
 using kudu::tserver::TabletServerErrorPB;
+using kudu::tserver::TabletServerFeatures;
 using std::make_optional;
 using std::nullopt;
 using std::optional;
@@ -3158,25 +3166,42 @@ Status CatalogManager::ApplyAlterPartitioningSteps(
     vector<Partition> partitions;
     const pair<KuduPartialRow, KuduPartialRow> range_bound =
         { *ops[0].split_row, *ops[1].split_row };
+    const auto& table_wide_hash_schema = partition_schema.hash_schema();
     if (step.type() == AlterTableRequestPB::ADD_RANGE_PARTITION) {
-      if (!FLAGS_enable_per_range_hash_schemas ||
-          !step.add_range_partition().has_custom_hash_schema()) {
+      // Clients are free to send in information on a new partition to add
+      // in a format that's used to add partitions with custom hash schemas
+      // even if the hash schema for the new range is the same as the table-wide
+      // hash schema. At this point it's necessary to have a clear separation
+      // between ranges with custom hash schemas and ranges with the table-wide
+      // hash schemas since the code below adds different records into
+      // the system catalog table depending on the actual hash schema for the
+      // newly added range.
+      //
+      // So, let's figure out whether the partition being added has a hash
+      // schema that differs from the table-wide hash schema.
+      bool has_custom_hash_schema = false;
+      PartitionSchema::HashSchema range_hash_schema;
+      if (FLAGS_enable_per_range_hash_schemas &&
+          step.add_range_partition().has_custom_hash_schema()) {
+        const auto& custom_hash_schema_pb =
+            step.add_range_partition().custom_hash_schema().hash_schema();
+        RETURN_NOT_OK(PartitionSchema::ExtractHashSchemaFromPB(
+          schema, custom_hash_schema_pb, &range_hash_schema));
+        has_custom_hash_schema = table_wide_hash_schema != range_hash_schema;
+      }
+
+      if (!has_custom_hash_schema) {
         RETURN_NOT_OK(partition_schema.CreatePartitions(
             {}, { range_bound }, schema, &partitions));
       } else {
-        const auto& custom_hash_schema_pb =
-            step.add_range_partition().custom_hash_schema().hash_schema();
-        const Schema schema = client_schema.CopyWithColumnIds();
-        PartitionSchema::HashSchema hash_schema;
-        RETURN_NOT_OK(PartitionSchema::ExtractHashSchemaFromPB(
-            schema, custom_hash_schema_pb, &hash_schema));
-        if (partition_schema.hash_schema().size() != hash_schema.size()) {
+        if (table_wide_hash_schema.size() != range_hash_schema.size()) {
           return Status::NotSupported(
               "varying number of hash dimensions per range is not yet supported");
         }
-        RETURN_NOT_OK(PartitionSchema::ValidateHashSchema(schema, hash_schema));
+        const Schema schema = client_schema.CopyWithColumnIds();
+        RETURN_NOT_OK(PartitionSchema::ValidateHashSchema(schema, range_hash_schema));
         RETURN_NOT_OK(partition_schema.CreatePartitionsForRange(
-            range_bound, hash_schema, schema, &partitions));
+            range_bound, range_hash_schema, schema, &partitions));
 
         // Add information on the new range with custom hash schema into the
         // PartitionSchema for the table stored in the system catalog.
@@ -3185,7 +3210,7 @@ Status CatalogManager::ApplyAlterPartitioningSteps(
         RowOperationsPBEncoder encoder(range->mutable_range_bounds());
         encoder.Add(RowOperationsPB::RANGE_LOWER_BOUND, range_bound.first);
         encoder.Add(RowOperationsPB::RANGE_UPPER_BOUND, range_bound.second);
-        for (const auto& hash_dimension : hash_schema) {
+        for (const auto& hash_dimension : range_hash_schema) {
           auto* hash_dimension_pb = range->add_hash_schema();
           hash_dimension_pb->set_num_buckets(hash_dimension.num_buckets);
           hash_dimension_pb->set_seed(hash_dimension.seed);
@@ -3209,12 +3234,12 @@ Status CatalogManager::ApplyAlterPartitioningSteps(
         RETURN_NOT_OK(partition_schema.CreatePartitionsForRange(
             range_bound, range_hash_schema, schema, &partitions));
 
-        // Update the partition schema information to be stored in the system
-        // catalog table. The information on a range with the table-wide hash
-        // schema must not be present in the PartitionSchemaPB that the system
-        // catalog stores, so this is necessary only if the range has custom
-        // (i.e. other than the table-wide) hash schema.
-        if (range_hash_schema != partition_schema.hash_schema()) {
+        // The information on a range with the table-wide hash schema is not
+        // present in the PartitionSchemaPB that the system catalog stores.
+        // Only information on ranges with custom hash schemas is stored there.
+        if (range_hash_schema != table_wide_hash_schema) {
+          // If the range being dropped has a custom hash schema, update the
+          // partition schema information stored in the system catalog table.
           RETURN_NOT_OK(partition_schema.DropRange(
               range_bound.first, range_bound.second, schema));
           PartitionSchemaPB ps_pb;
@@ -4684,15 +4709,31 @@ Status RetryingTSRpcTask::Run() {
 }
 
 void RetryingTSRpcTask::RpcCallback() {
-  if (!rpc_.status().ok()) {
-    KLOG_EVERY_N_SECS(WARNING, 1) << Substitute("TS $0: $1 RPC failed for tablet $2: $3",
-                                                target_ts_desc_->ToString(), type_name(),
-                                                tablet_id(), rpc_.status().ToString());
-  } else if (state() != kStateAborted) {
-    HandleResponse(attempt_); // Modifies state_.
+  const auto& s = rpc_.status();
+  if (s.ok()) {
+    if (state() != kStateAborted) {
+      HandleResponse(attempt_); // Modifies state_.
+    }
+  } else {
+    DCHECK(!s.IsRemoteError() || (s.IsRemoteError() && rpc_.error_response()));
+    if (s.IsRemoteError() &&
+        rpc_.error_response() &&
+        rpc_.error_response()->unsupported_feature_flags_size() > 0 &&
+        !FLAGS_catalog_manager_retry_tserver_task_on_unsupported_feature_flags) {
+      // Once marked as failed, the task is unregistered below.
+      MarkFailed();
+      LOG(WARNING) << Substitute(
+          "TS $0: $1 RPC failed for tablet $2, no further retry: $3",
+          target_ts_desc_->ToString(), type_name(), tablet_id(), s.ToString());
+    } else {
+      KLOG_EVERY_N_SECS(WARNING, 1) << Substitute(
+          "TS $0: $1 RPC failed for tablet $2: $3",
+          target_ts_desc_->ToString(), type_name(), tablet_id(), s.ToString());
+    }
   }
 
-  // Schedule a retry if the RPC call was not successful.
+  // Schedule a retry if the RPC call was not successful and the task's overall
+  // status is still 'running'.
   if (RescheduleWithBackoffDelay()) {
     return;
   }
@@ -4807,12 +4848,13 @@ class AsyncCreateReplica : public RetrySpecificTSRpcTask {
  public:
 
   // The tablet lock must be acquired for reading before making this call.
-  AsyncCreateReplica(Master *master,
+  AsyncCreateReplica(Master* master,
                      const string& permanent_uuid,
                      const scoped_refptr<TabletInfo>& tablet,
                      const TabletMetadataLock& tablet_lock)
-    : RetrySpecificTSRpcTask(master, permanent_uuid, tablet->table().get()),
-      tablet_id_(tablet->id()) {
+      : RetrySpecificTSRpcTask(master, permanent_uuid, tablet->table().get()),
+        tablet_id_(tablet->id()),
+        schema_has_nested_columns_(false) {
     deadline_ = start_ts_ + MonoDelta::FromMilliseconds(FLAGS_tablet_creation_timeout_ms);
 
     TableMetadataLock table_lock(tablet->table().get(), LockMode::READ);
@@ -4830,6 +4872,15 @@ class AsyncCreateReplica : public RetrySpecificTSRpcTask {
         table_lock.data().pb.extra_config());
     req_.set_dimension_label(tablet_lock.data().pb.dimension_label());
     req_.set_table_type(table_lock.data().pb.table_type());
+
+    Schema schema;
+    const auto s = SchemaFromPB(req_.schema(), &schema);
+    if (PREDICT_TRUE(s.ok())) {
+      schema_has_nested_columns_ = schema.has_nested_columns();
+    } else {
+      KLOG_EVERY_N_SECS(WARNING, 60) << Substitute(
+          "could not convert table's $0 schema from PB: $1", req_.table_id(), s.ToString());
+    }
   }
 
   string type_name() const override { return "CreateTablet"; }
@@ -4863,6 +4914,11 @@ class AsyncCreateReplica : public RetrySpecificTSRpcTask {
     VLOG(1) << Substitute("Sending $0 request to $1 (attempt $2): $3",
                           type_name(), target_ts_desc_->ToString(), attempt,
                           SecureDebugString(req_));
+    if (schema_has_nested_columns_) {
+      DCHECK(!ContainsKey(rpc_.required_server_features(),
+                          TabletServerFeatures::ARRAY_1D_COLUMN_TYPE));
+      rpc_.RequireServerFeature(TabletServerFeatures::ARRAY_1D_COLUMN_TYPE);
+    }
     ts_proxy_->CreateTabletAsync(req_, &resp_, &rpc_,
                                  [this]() { this->RpcCallback(); });
     return true;
@@ -4872,6 +4928,7 @@ class AsyncCreateReplica : public RetrySpecificTSRpcTask {
   const string tablet_id_;
   tserver::CreateTabletRequestPB req_;
   tserver::CreateTabletResponsePB resp_;
+  bool schema_has_nested_columns_;
 };
 
 // Send a DeleteTablet() RPC request.
@@ -5051,6 +5108,21 @@ class AsyncAlterTable : public RetryingTSRpcTask {
 
     l.Unlock();
 
+    // A sanity check: the ARRAY_1D_COLUMN_TYPE service feature shouldn't be
+    // there yet, even if the schema has nested columns; the feature is added
+    // below in the latter case.
+    DCHECK(!ContainsKey(rpc_.required_server_features(),
+                        TabletServerFeatures::ARRAY_1D_COLUMN_TYPE));
+    Schema schema;
+    const auto s = SchemaFromPB(req.schema(), &schema);
+    if (PREDICT_FALSE(!s.ok())) {
+      KLOG_EVERY_N_SECS(WARNING, 60) << Substitute(
+          "could not convert tablet's $0 schema from PB: $1",
+          req.tablet_id(), s.ToString());
+    } else if (schema.has_nested_columns()) {
+      // Require corresponding service features at the tablet server.
+      rpc_.RequireServerFeature(TabletServerFeatures::ARRAY_1D_COLUMN_TYPE);
+    }
     VLOG(1) << Substitute("Sending $0 request to $1 (attempt $2): $3",
                           type_name(), target_ts_desc_->ToString(), attempt,
                           SecureDebugString(req));

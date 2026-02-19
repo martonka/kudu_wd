@@ -182,6 +182,12 @@ DEFINE_bool(tserver_txn_write_op_handling_enabled, true,
             "in the context of multi-row transactions");
 TAG_FLAG(tserver_txn_write_op_handling_enabled, hidden);
 
+DEFINE_bool(tserver_support_1d_array_columns, true,
+            "Whether the tablet server can host a tablet which schema contains "
+            "one-dimensional array column");
+TAG_FLAG(tserver_support_1d_array_columns, hidden);
+TAG_FLAG(tserver_support_1d_array_columns, runtime);
+
 DECLARE_bool(enable_txn_system_client_init);
 DECLARE_bool(raft_prepare_replacement_before_eviction);
 DECLARE_int32(memory_limit_warn_threshold_percentage);
@@ -1198,7 +1204,7 @@ void TabletServiceAdminImpl::AlterSchema(const AlterSchemaRequestPB* req,
     // specified in the request.
     Schema req_schema;
     Status s = SchemaFromPB(req->schema(), &req_schema);
-    if (!s.ok()) {
+    if (PREDICT_FALSE(!s.ok())) {
       SetupErrorAndRespond(resp->mutable_error(), s,
                            TabletServerErrorPB::INVALID_SCHEMA, context);
       return;
@@ -1431,13 +1437,15 @@ void TabletServiceAdminImpl::ParticipateInTransaction(const ParticipantRequestPB
 }
 
 bool TabletServiceAdminImpl::SupportsFeature(uint32_t feature) const {
+  // TODO(awong): once transactions are useable, add a feature flag.
   switch (feature) {
     case TabletServerFeatures::COLUMN_PREDICATES:
     case TabletServerFeatures::PAD_UNIXTIME_MICROS_TO_16_BYTES:
     case TabletServerFeatures::QUIESCING:
     case TabletServerFeatures::BLOOM_FILTER_PREDICATE_V2:
-    // TODO(awong): once transactions are useable, add a feature flag.
       return true;
+    case TabletServerFeatures::ARRAY_1D_COLUMN_TYPE:
+      return PREDICT_TRUE(FLAGS_tserver_support_1d_array_columns);
     default:
       return false;
   }
@@ -1475,19 +1483,25 @@ void TabletServiceAdminImpl::CreateTablet(const CreateTabletRequestPB* req,
   Schema schema;
   Status s = SchemaFromPB(req->schema(), &schema);
   DCHECK(schema.has_column_ids());
-  if (!s.ok()) {
+  if (PREDICT_FALSE(!s.ok())) {
+    static constexpr const char* const kErrMsg = "invalid Schema";
     SetupErrorAndRespond(resp->mutable_error(),
-                         Status::InvalidArgument("Invalid Schema."),
+                         Status::InvalidArgument(kErrMsg),
                          TabletServerErrorPB::INVALID_SCHEMA, context);
+    KLOG_EVERY_N_SECS(ERROR, 60)
+        << Substitute("$0: $1", kErrMsg, s.ToString()) << THROTTLE_MSG;
     return;
   }
 
   PartitionSchema partition_schema;
   s = PartitionSchema::FromPB(req->partition_schema(), schema, &partition_schema);
-  if (!s.ok()) {
+  if (PREDICT_FALSE(!s.ok())) {
+    static constexpr const char* const kErrMsg = "invalid PartitionSchema";
     SetupErrorAndRespond(resp->mutable_error(),
-                         Status::InvalidArgument("Invalid PartitionSchema."),
+                         Status::InvalidArgument(kErrMsg),
                          TabletServerErrorPB::INVALID_SCHEMA, context);
+    KLOG_EVERY_N_SECS(ERROR, 60)
+        << Substitute("$0: $1", kErrMsg, s.ToString()) << THROTTLE_MSG;
     return;
   }
 
@@ -2660,6 +2674,8 @@ bool TabletServiceImpl::SupportsFeature(uint32_t feature) const {
     case TabletServerFeatures::BLOOM_FILTER_PREDICATE_V2:
     case TabletServerFeatures::COLUMNAR_LAYOUT_FEATURE:
       return true;
+    case TabletServerFeatures::ARRAY_1D_COLUMN_TYPE:
+      return PREDICT_TRUE(FLAGS_tserver_support_1d_array_columns);
     default:
       return false;
   }

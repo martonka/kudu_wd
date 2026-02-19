@@ -17,6 +17,7 @@
     inflate*;
     zError;
     zlib*;
+    compress*;
     uncompress*;
 
     # devtoolset

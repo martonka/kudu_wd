@@ -23,6 +23,7 @@
 #include <ostream>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -40,12 +41,12 @@
 #include "kudu/util/logging.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
-#include "kudu/util/slice.h"
 #include "kudu/util/status.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/threadpool.h"
 
 using std::make_shared;
+using std::memory_order;
 using std::shared_ptr;
 using std::unique_ptr;
 
@@ -61,6 +62,10 @@ TAG_FLAG(codegen_cache_capacity, experimental);
 DEFINE_int32(codegen_queue_capacity, 100, "Number of tasks which may be put in the code "
              "generation task queue.");
 TAG_FLAG(codegen_queue_capacity, experimental);
+
+DEFINE_int32(codegen_compiler_manager_pool_max_threads_num, 1,
+             "Maximum number of threads in the compiler manager pool");
+TAG_FLAG(codegen_compiler_manager_pool_max_threads_num, hidden);
 
 METRIC_DEFINE_gauge_uint64(server, code_cache_hits, "Codegen Cache Hits",
                            kudu::MetricUnit::kCacheHits,
@@ -81,16 +86,21 @@ namespace {
 // A CompilationTask is a task which, given a pair of schemas and a cache to
 // refer to, will generate code pertaining to the two schemas and store it in
 // the cache when run.
-class CompilationTask {
+class CompilationTask final {
  public:
   // Requires that the cache and generator are valid for the lifetime
   // of this object.
-  CompilationTask(const Schema& base, const Schema& proj, CodeCache* cache,
+  CompilationTask(Schema base,
+                  Schema proj,
+                  faststring key,
+                  CodeCache* cache,
                   CodeGenerator* generator)
-    : base_(base),
-      proj_(proj),
-      cache_(cache),
-      generator_(generator) {}
+      : base_(std::move(base)),
+        proj_(std::move(proj)),
+        key_(std::move(key)),
+        cache_(cache),
+        generator_(generator) {
+  }
 
   // Can only be run once.
   void Run() {
@@ -105,25 +115,24 @@ class CompilationTask {
 
  private:
   Status RunWithStatus() {
-    faststring key;
-    RETURN_NOT_OK(RowProjectorFunctions::EncodeKey(base_, proj_, &key));
-
     // Check again to make sure we didn't compile it already.
     // This can occur if we request the same schema pair while the
     // first one's compiling.
-    if (cache_->Lookup(key)) return Status::OK();
+    if (cache_->Lookup(key_)) {
+      return Status::OK();
+    }
 
     scoped_refptr<RowProjectorFunctions> functions;
     LOG_TIMING_IF(INFO, FLAGS_codegen_time_compilation, "code-generating row projector") {
       RETURN_NOT_OK(generator_->CompileRowProjector(base_, proj_, &functions));
     }
 
-    RETURN_NOT_OK(cache_->AddEntry(functions));
-    return Status::OK();
+    return cache_->AddEntry(key_, functions);
   }
 
-  Schema base_;
-  Schema proj_;
+  const Schema base_;
+  const Schema proj_;
+  const faststring key_;
   CodeCache* const cache_;
   CodeGenerator* const generator_;
 
@@ -133,12 +142,12 @@ class CompilationTask {
 } // anonymous namespace
 
 CompilationManager::CompilationManager()
-  : cache_(FLAGS_codegen_cache_capacity),
-    hit_counter_(0),
-    query_counter_(0) {
+    : cache_(FLAGS_codegen_cache_capacity),
+      hit_counter_(0),
+      query_counter_(0) {
   CHECK_OK(ThreadPoolBuilder("compiler_manager_pool")
            .set_min_threads(0)
-           .set_max_threads(1)
+           .set_max_threads(FLAGS_codegen_compiler_manager_pool_max_threads_num)
            .set_max_queue_size(FLAGS_codegen_queue_capacity)
            .set_idle_timeout(MonoDelta::FromMilliseconds(100))
            .Build(&pool_));
@@ -171,12 +180,12 @@ Status CompilationManager::StartInstrumentation(const scoped_refptr<MetricEntity
   metric_entity->NeverRetire(METRIC_code_cache_hits.InstantiateFunctionGauge(
       metric_entity,
       [this]() {
-        return this->hit_counter_.load(std::memory_order::memory_order_relaxed);
+        return this->hit_counter_.load(memory_order::memory_order_relaxed);
       }));
   metric_entity->NeverRetire(METRIC_code_cache_queries.InstantiateFunctionGauge(
       metric_entity,
       [this]() {
-        return this->query_counter_.load(std::memory_order::memory_order_relaxed);
+        return this->query_counter_.load(memory_order::memory_order_relaxed);
       }));
   return Status::OK();
 }
@@ -186,27 +195,28 @@ bool CompilationManager::RequestRowProjector(const Schema* base_schema,
                                              unique_ptr<RowProjector>* out) {
   faststring key;
   const auto s = RowProjectorFunctions::EncodeKey(*base_schema, *projection, &key);
-  WARN_NOT_OK(s, "RowProjector compilation request encode key failed");
   if (PREDICT_FALSE(!s.ok())) {
+    LOG(WARNING) << "RowProjector compilation request encode key failed: "
+                 << s.ToString();
     return false;
   }
-  ++query_counter_;
+  query_counter_.fetch_add(1, memory_order::memory_order_relaxed);
 
   scoped_refptr<RowProjectorFunctions> cached(
-    down_cast<RowProjectorFunctions*>(cache_.Lookup(key).get()));
+      down_cast<RowProjectorFunctions*>(cache_.Lookup(key).get()));
 
   // If not cached, add a request to compilation pool
   if (!cached) {
     shared_ptr<CompilationTask> task(make_shared<CompilationTask>(
-        *base_schema, *projection, &cache_, &generator_));
+        *base_schema, *projection, std::move(key), &cache_, &generator_));
     WARN_NOT_OK_EVERY_N_SECS(pool_->Submit([task]() { task->Run(); }),
                     "RowProjector compilation request submit failed", 10);
     return false;
   }
+  hit_counter_.fetch_add(1, memory_order::memory_order_relaxed);
 
-  ++hit_counter_;
+  out->reset(new RowProjector(base_schema, projection, std::move(cached)));
 
-  out->reset(new RowProjector(base_schema, projection, cached));
   return true;
 }
 

@@ -96,10 +96,11 @@ llvm::Function* MakeProjection(const string& name,
   const Schema& base_schema = *proj.base_schema();
   const Schema& projection = *proj.projection();
 
+  Type* ptrTy  = PointerType::get(context, 0);
   // Create the function after providing a declaration
-  vector<Type*> argtypes = { Type::getInt8PtrTy(context),
-                             PointerType::getUnqual(mbuilder->GetType("class.kudu::RowBlockRow")),
-                             PointerType::getUnqual(mbuilder->GetType("class.kudu::Arena")) };
+  vector<Type*> argtypes = { ptrTy,
+                             ptrTy,
+                             ptrTy };
   FunctionType* fty =
     FunctionType::get(Type::getInt1Ty(context), argtypes, false);
   Function* f = mbuilder->Create(fty, name);
@@ -174,7 +175,11 @@ llvm::Function* MakeProjection(const string& name,
   // The bitmap for a contiguous row goes after the row data
   // See common/row.h ContiguousRowHelper class
   builder->SetInsertPoint(BasicBlock::Create(context, "entry", f));
-  Value* src_bitmap = builder->CreateConstGEP1_64(src, base_schema.byte_size());
+  Value* src_bitmap_offset =
+    builder->getInt64(static_cast<uint64_t>(base_schema.byte_size()));
+  Value* src_i8 = builder->CreateBitCast(src, Type::getInt8PtrTy(context));
+  Value* src_bitmap =
+      builder->CreateInBoundsGEP(Type::getInt8Ty(context), src_i8, src_bitmap_offset);
   src_bitmap->setName("src_bitmap");
   Value* success = builder->getInt1(true);
   int success_update_number = 0;
@@ -189,7 +194,11 @@ llvm::Function* MakeProjection(const string& name,
 
     // Create the common values between the nullable and nonnullable calls
     Value* size = builder->getInt64(col.type_info()->size());
-    Value* src_cell = builder->CreateConstGEP1_64(src, src_offset);
+    Value* src_i8 = builder->CreateBitCast(src, llvm::Type::getInt8PtrTy(context));
+    Value* src_offset_val = builder->getInt64(static_cast<uint64_t>(src_offset));
+    Value* src_cell =
+        builder->CreateInBoundsGEP(Type::getInt8Ty(context), src_i8, src_offset_val);
+
     src_cell->setName(StrCat("src_cell_base_", base_idx));
     Value* col_idx = builder->getInt64(proj_idx);
     ConstantInt* is_binary = builder->getInt1(col.type_info()->physical_type() == BINARY);

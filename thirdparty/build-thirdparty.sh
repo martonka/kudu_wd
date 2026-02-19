@@ -307,6 +307,10 @@ if [ -n "$F_COMMON" -o -n "$F_RANGER_KMS" ]; then
   $PREFIX/opt/ranger-kms/ews/webapp/WEB-INF/classes/conf
 fi
 
+# Actual Kudu binaries only use the header-only part
+if [ -n "$F_COMMON" -o -n "$F_FLATBUFFERS" ]; then
+  build_flatbuffers
+fi
 ### Build C dependencies without instrumentation
 
 PREFIX=$PREFIX_DEPS
@@ -376,13 +380,8 @@ EXTRA_CXXFLAGS="-g $EXTRA_CXXFLAGS"
 
 # Build libc++abi first as it is a dependency for libc++.
 if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
-  build_libcxxabi
+  build_libcxx_and_libcxxabi normal
 fi
-
-if [ -n "$F_UNINSTRUMENTED" -o -n "$F_LLVM" ]; then
-  build_libcxx normal
-fi
-
 if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GFLAGS" ]; then
   build_gflags
 fi
@@ -399,9 +398,6 @@ if [ -n "$F_UNINSTRUMENTED" -o -n "$F_GMOCK" ]; then
   build_gmock_gtest
 fi
 
-if [ -n "$F_UNINSTRUMENTED" -o -n "$F_FLATBUFFERS" ]; then
-  build_flatbuffers
-fi
 
 if [ -n "$F_UNINSTRUMENTED" -o -n "$F_PROTOBUF" ]; then
   build_protobuf
@@ -533,19 +529,11 @@ fi
 restore_env
 
 ### Build C++ dependencies with TSAN instrumentation
-
-# Build libc++abi first as it is a dependency for libc++. Its build has no
-# built-in support for sanitizers, so we build it regularly.
 if [ -n "$F_TSAN" -o -n "$F_LLVM" ]; then
-  build_libcxxabi
+  build_libcxx_and_libcxxabi tsan
 fi
 
 save_env
-
-# Build libc++ with TSAN enabled.
-if [ -n "$F_TSAN" -o -n "$F_LLVM" ]; then
-  build_libcxx tsan
-fi
 
 # Build the rest of the dependencies against the TSAN-instrumented libc++
 # instead of the system's C++ standard library.
@@ -580,10 +568,6 @@ EXTRA_LDFLAGS="-stdlib=libc++ $EXTRA_LDFLAGS"
 # take up more than 20GiB of disk space.
 EXTRA_CFLAGS="-g $EXTRA_CFLAGS"
 EXTRA_CXXFLAGS="-g $EXTRA_CXXFLAGS"
-
-if [ -n "$F_TSAN" -o -n "$F_FLATBUFFERS" ]; then
-  build_flatbuffers
-fi
 
 if [ -n "$F_TSAN" -o -n "$F_PROTOBUF" ]; then
   build_protobuf

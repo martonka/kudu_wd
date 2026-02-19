@@ -89,9 +89,6 @@ const size_t kChecksumSize = sizeof(uint32_t);
 
 static const size_t kMinBlockSize = 512;
 
-// TODO(aserbin): source this from a flag?
-static const size_t kMaxElementsInArray = 1024;
-
 class NonNullBitmapBuilder {
  public:
   explicit NonNullBitmapBuilder(size_t initial_row_capacity)
@@ -269,13 +266,19 @@ Status CFileWriter::Start() {
   data_block_ = type_encoding_info_->CreateBlockBuilder(&options_);
 
   if (is_array_) {
-    // Array data blocks allows nullable elements both for array's elements
-    // and for arrays cells themselves.
-    size_t nrows =
-        (options_.storage_attributes.cfile_block_size + typeinfo_->size() - 1) /
-        typeinfo_->size();
-    array_non_null_bitmap_builder_.reset(new NonNullBitmapBuilder(nrows));
-    non_null_bitmap_builder_.reset(new NonNullBitmapBuilder(nrows * kMaxElementsInArray));
+    // Array data blocks allows for nullable elements in array cells and
+    // the cells themselves, so both non_null_bitmap_builder_ and
+    // array_non_null_bitmap_builder_ are needed to maintain non-nullness
+    // (a.k.a. validity) metadata.
+    // The initial estimate for the encoders' memory buffers assumes the worst
+    // case of all cells being single element arrays, and also takes into
+    // account the possibility of going over the configured size for the
+    // CFile block (that's why factor 2 appeared below).
+    const size_t elem_size = GetArrayElementTypeInfo(*typeinfo_)->size();
+    const size_t nrows =
+        (2 * options_.storage_attributes.cfile_block_size + elem_size - 1) / elem_size;
+    array_non_null_bitmap_builder_.reset(new NonNullBitmapBuilder((nrows + 1) / 2));
+    non_null_bitmap_builder_.reset(new NonNullBitmapBuilder(nrows));
     array_elem_num_builder_.reset(new ArrayElemNumBuilder(nrows));
   } else if (is_nullable_) {
     size_t nrows =
@@ -505,15 +508,6 @@ Status CFileWriter::AppendNullableArrayEntries(const uint8_t* bitmap,
         array_elem_num_builder_->Add(0);
       }
 
-#if DCHECK_IS_ON()
-      // TODO(aserbin): re-enable this extra validation after SetNull()/set_null()
-      //                updates the underlying Slice for previously stored
-      //                non-null cell's data in ContiguousRow and elsewhere
-      //                if DCHECK_IS_ON()
-      //const Slice* cell = cells_ptr;
-      //DCHECK(cell->empty());
-#endif // if DCHECK_IS_ON() ...
-
       cells_ptr += cells_num;
       cur_cell_idx += cells_num;
     } else {
@@ -540,7 +534,7 @@ Status CFileWriter::AppendNullableArrayEntries(const uint8_t* bitmap,
         }
 
         const uint8_t* cell_non_null_bitmap = view.not_null_bitmap();
-        DCHECK(cell_non_null_bitmap);
+        DCHECK(cell_non_null_bitmap || !view.has_nulls());
         BitmapIterator elem_bitmap_iter(cell_non_null_bitmap,
                                         cell_elem_num);
         const uint8_t* data = view.data_as(elem_type_info->type());

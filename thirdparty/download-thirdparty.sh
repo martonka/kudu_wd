@@ -286,7 +286,7 @@ fetch_and_patch \
  "patch -p1 < $TP_DIR/patches/rapidjson-document-assignment-operator-00.patch" \
  "patch -p1 < $TP_DIR/patches/rapidjson-document-assignment-operator-01.patch"
 
-SQUEASEL_PATCHLEVEL=4
+SQUEASEL_PATCHLEVEL=5
 fetch_and_patch \
  squeasel-${SQUEASEL_VERSION}.tar.gz \
  $SQUEASEL_SOURCE \
@@ -294,7 +294,8 @@ fetch_and_patch \
  "patch -p1 < $TP_DIR/patches/squeasel-handle-openssl-errors.patch" \
  "patch -p1 < $TP_DIR/patches/squeasel-tls-min-version.patch" \
  "patch -p1 < $TP_DIR/patches/squeasel-support-get-bound-addresses-for-ipv6.patch" \
- "patch -p1 < $TP_DIR/patches/squeasel-tls-openssl10x.patch"
+ "patch -p1 < $TP_DIR/patches/squeasel-tls-openssl10x.patch" \
+ "patch -p1 < $TP_DIR/patches/squeasel-ipv6-only-socket-option.patch"
 
 MUSTACHE_PATCHLEVEL=0
 fetch_and_patch \
@@ -345,26 +346,14 @@ fetch_and_patch \
  $PYTHON_SOURCE \
  $PYTHON_PATCHLEVEL
 
-LLVM_PATCHLEVEL=8
+LLVM_PATCHLEVEL=3
 fetch_and_patch \
  llvm-${LLVM_VERSION}-iwyu-${IWYU_VERSION}.src.tar.gz \
  $LLVM_SOURCE \
  $LLVM_PATCHLEVEL \
- "patch -p1 < $TP_DIR/patches/llvm-add-iwyu.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-iwyu-718e69875.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-iwyu-0de60d8a2.patch" \
- "patch -d projects -p1 < $TP_DIR/patches/llvm-remove-cyclades-inclusion-in-sanitizer.patch" \
- "patch -p2 < $TP_DIR/patches/llvm-fix-missing-include.patch" \
- "patch -d projects -p1 < $TP_DIR/patches/llvm-Sanitizer-built-against-glibc-2_34-doesnt-work.patch" \
- "patch -d tools -p1 < $TP_DIR/patches/llvm-ignore-flto-values.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-01.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-nostdinc-nostdlib-02.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-include-llvm-support-signals.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-is-convertible-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-is-convertible-01.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-00.patch" \
- "patch -p1 < $TP_DIR/patches/llvm-chrono-duration-01.patch"
+ "patch -p1 < $TP_DIR/patches/llvm-section-mm-memory-mapper.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-section-mm-extra-methods.patch" \
+ "patch -p1 < $TP_DIR/patches/llvm-mcjit-bail-on-error.patch"
 
 LZ4_PATCHLEVEL=0
 fetch_and_patch \
