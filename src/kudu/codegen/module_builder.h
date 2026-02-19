@@ -80,8 +80,6 @@ class ModuleBuilder {
 
   // Create a new, empty function in the module with external linkage
   llvm::Function* Create(llvm::FunctionType* fty, const std::string& name);
-  // Retrieve a precompiled type
-  llvm::Type* GetType(const std::string& name);
   // Retrieve a precompiled function
   llvm::Function* GetFunction(const std::string& name);
   // Get the LLVM wrapper for a constant pointer value of type i8*

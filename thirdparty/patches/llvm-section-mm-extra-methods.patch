@@ -1,5 +1,5 @@
---- a/lib/ExecutionEngine/SectionMemoryManager.cpp	2026-01-31 09:06:29.326138922 -0800
-+++ b/lib/ExecutionEngine/SectionMemoryManager.cpp	2026-01-31 09:13:40.829420553 -0800
+--- a/llvm/lib/ExecutionEngine/SectionMemoryManager.cpp	2026-01-31 09:06:29.326138922 -0800
++++ b/llvm/lib/ExecutionEngine/SectionMemoryManager.cpp	2026-01-31 09:13:40.829420553 -0800
 @@ -102,7 +102,7 @@
    // interleaving.
    std::error_code ec;
@@ -31,8 +31,8 @@
 +}
 +
  } // namespace llvm
---- a/include/llvm/ExecutionEngine/SectionMemoryManager.h	2026-01-31 09:06:17.088074261 -0800
-+++ b/include/llvm/ExecutionEngine/SectionMemoryManager.h	2026-01-31 09:12:50.779155873 -0800
+--- a/llvm/include/llvm/ExecutionEngine/SectionMemoryManager.h	2026-01-31 09:06:17.088074261 -0800
++++ b/llvm/include/llvm/ExecutionEngine/SectionMemoryManager.h	2026-01-31 09:12:50.779155873 -0800
 @@ -105,6 +105,11 @@
    /// memory mapper.  If \p MM is nullptr then a default memory mapper is used
    /// that directly calls into the operating system.

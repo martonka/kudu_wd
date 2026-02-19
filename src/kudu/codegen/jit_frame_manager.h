@@ -88,11 +88,11 @@ class JITFrameManager final : public llvm::SectionMemoryManager {
   // Reserve the memory to provide at least the specified amount of memory for
   // object sections.
   void reserveAllocationSpace(uintptr_t code_size,
-                              uint32_t code_align,
+                              llvm::Align code_align,
                               uintptr_t ro_data_size,
-                              uint32_t ro_data_align,
+                              llvm::Align ro_data_align,
                               uintptr_t rw_data_size,
-                              uint32_t rw_data_align) override;
+                              llvm::Align rw_data_align) override;
  private:
   // This is a non-owning pointer to the memory mapper object that's passed to
   // the constructor and then to the base SectionMemoryManager object.

@@ -1,0 +1,11 @@
+--- a/include-what-you-use/CMakeLists.txt
++++ b/include-what-you-use/CMakeLists.txt
+@@ -134,6 +134,8 @@
+   ${iwyu_include_dirs}
+ )
+ 
++target_compile_options(include-what-you-use PRIVATE -Wno-pedantic)
++
+ if (MINGW)
+   target_compile_options(include-what-you-use PRIVATE
+     # Work around 'too many sections' error with MINGW/GCC.
