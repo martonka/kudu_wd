@@ -29,6 +29,13 @@ set -o pipefail
 # Install the prerequisite libraries, if they are not installed.
 # CentOS/RHEL
 if [[ -f "/usr/bin/yum" ]]; then
+  if [ -e /etc/os-release ]; then
+    source /etc/os-release
+    OS_MAJOR_VERSION=$(echo $VERSION_ID | cut -f1 -d.)
+  else
+    echo "Unable to get RHEL version"
+    exit 1
+  fi
   # Update the repo.
   yum update -y
 
@@ -55,7 +62,6 @@ if [[ -f "/usr/bin/yum" ]]; then
     openssl-devel \
     patch \
     pkgconfig \
-    redhat-lsb-core \
     rsync \
     sudo \
     unzip \
@@ -63,8 +69,17 @@ if [[ -f "/usr/bin/yum" ]]; then
     which \
     wget
 
-  # Get the major version for version specific package logic below.
-  OS_MAJOR_VERSION=$(lsb_release -rs | cut -f1 -d.)
+  if [[ "$OS_MAJOR_VERSION" -ge "9" ]]; then
+    yum install -y  krb5-libs krb5-devel
+  fi
+
+  if [[ "$OS_MAJOR_VERSION" -ge "8" ]]; then
+    yum install -y perl python3 python3-pip
+    yum groupinstall -y "Development Tools"
+    if [[ "$OS_MAJOR_VERSION" -eq "8" ]]; then
+      alternatives --set python /usr/bin/python3
+    fi
+  fi
 
   # Install exta impala packages for the impala images. They are nominal in size.
   # --no-install-recommends keeps the install smaller
@@ -77,16 +92,35 @@ if [[ -f "/usr/bin/yum" ]]; then
   # to install the ninja-build package.
   if [[ "$OS_MAJOR_VERSION" -gt "7" ]]; then
     yum install -y 'dnf-command(config-manager)'
-    yum config-manager --set-enabled powertools
+
+    ARCH="$(arch)"
+    CANDIDATES=(
+      "codeready-builder-for-rhel-${OS_MAJOR_VERSION}-${ARCH}-rpms"
+      "codeready-builder-for-rhel-${OS_MAJOR_VERSION}-${ARCH}-rpms-internal"
+      "rhui-codeready-builder-for-rhel-${OS_MAJOR_VERSION}-rhui-rpms" # aws
+    )
+    ALL_REPOS="$(yum repolist all -q 2>/dev/null)"
+    for rid in "${CANDIDATES[@]}"; do
+      if printf '%s\n' "$ALL_REPOS" | awk '{print $1}' | grep -qx "$rid"; then
+        yum config-manager --set-enabled "$rid"
+        break
+      fi
+    done
   fi
 
   # Install libraries often used for Kudu development and build performance.
-  yum install -y epel-release
+  if ! yum install -y epel-release; then
+    yum install -y \
+      https://dl.fedoraproject.org/pub/epel/epel-release-latest-${OS_MAJOR_VERSION}.noarch.rpm
+  fi
   yum install -y \
     ccache \
     cmake \
-    ninja-build \
     vim
+
+  if ! yum install -y ninja-build; then
+    python3 -m pip install ninja
+  fi
 
   # Install docs build libraries.
   # Note: Uncomment to include in your dev images. These are excluded to reduce image size and build time.
