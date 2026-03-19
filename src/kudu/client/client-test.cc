@@ -1088,13 +1088,15 @@ TEST_F(ClientTest, TestDefaultRPCTimeoutSessionTimeoutDifferent) {
   shared_ptr<KuduTable> table;
   ASSERT_OK(CreateTable("rpctimeouttest", 1, {}, {}, &table));
   constexpr int rpcTimeoutMs = 3000;
+  // We want to reset the latency before the 3rd retry (with a safety margin).
+  constexpr int waitTimeBeforeReset = rpcTimeoutMs * 2 - 500;
   // Tablet lookup will trigger timeout.
   FLAGS_master_inject_latency_on_tablet_lookups_ms = rpcTimeoutMs * 2;
 
   CountDownLatch latch(1);
 
   thread set_timeout_back_to_zero([&]() {
-    const auto sleep_interval = MonoDelta::FromMilliseconds(rpcTimeoutMs * 2L);
+    const auto sleep_interval = MonoDelta::FromMilliseconds(waitTimeBeforeReset);
     latch.WaitFor(sleep_interval);
     // After some time, tablet lookup will be fast enough to be successful.
     FLAGS_master_inject_latency_on_tablet_lookups_ms = 0;
@@ -1109,7 +1111,8 @@ TEST_F(ClientTest, TestDefaultRPCTimeoutSessionTimeoutDifferent) {
   builder.default_rpc_timeout(MonoDelta::FromMilliseconds(rpcTimeoutMs));
   ASSERT_OK(cluster_->CreateClient(&builder, &client_));
   const shared_ptr<KuduSession> session = client_->NewSession();
-  session->SetTimeoutMillis(rpcTimeoutMs * 3);
+  // It usually takes only 3 tries, but there is no harm of allowing a 4th one
+  session->SetTimeoutMillis(rpcTimeoutMs * 4);
 
   auto ent = cluster_->mini_master()->master()->metric_entity();
   auto tablelocation_request_count =
@@ -1117,10 +1120,13 @@ TEST_F(ClientTest, TestDefaultRPCTimeoutSessionTimeoutDifferent) {
           ->TotalCount();
   ASSERT_OK(session->Apply(BuildTestInsert(table.get(), 2).release()));
   // Check that there were more than one tries which indicates RPC timeout and retry.
-  ASSERT_LT(1,
-            METRIC_handler_latency_kudu_master_MasterService_GetTableLocations.Instantiate(ent)
-                    ->TotalCount() -
-                tablelocation_request_count);
+  AssertEventually([&] {
+    ASSERT_LT(1,
+              METRIC_handler_latency_kudu_master_MasterService_GetTableLocations.Instantiate(ent)
+                      ->TotalCount() -
+                  tablelocation_request_count);
+  }, MonoDelta::FromSeconds(2));
+  NO_PENDING_FATALS();
 }
 
 TEST_F(ClientTest, TestClusterId) {
