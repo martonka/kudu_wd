@@ -3104,6 +3104,32 @@ class KeepAlivePeriodicallyTest :
 
 INSTANTIATE_TEST_SUITE_P(KeepAlivePeriodically, KeepAlivePeriodicallyTest, ::testing::Bool());
 
+// Stress test for TSAN: the periodic keep-alive timer runs on a reactor thread
+// and (before the fix in scanner-internal) read proxy_/next_req_/last_response_
+// while the scan thread updated them in OpenTablet()/SendScanRpc(). This runs
+// for a fixed duration with a short keep-alive interval and full table scans
+// across tablets/servers using the fixture client.
+TEST_F(KeepAlivePeriodicallyTest, TestBackgroundSessionRepeatedClientTeardown) {
+  SKIP_IF_SLOW_NOT_ALLOWED();
+
+  FLAGS_scanner_ttl_ms = 500;
+  // Short interval so the timer fires often while NextBatch/OpenTablet run.
+  constexpr uint64_t kKeepAliveIntervalMs = 5;
+
+  const MonoTime deadline = MonoTime::Now() + MonoDelta::FromSeconds(30);
+  while (MonoTime::Now() < deadline) {
+    KuduScanner scanner(test_table_.get());
+    ASSERT_OK(scanner.SetBatchSizeBytes(100));
+    ASSERT_OK(scanner.Open());
+    ASSERT_OK(scanner.StartKeepAlivePeriodically(kKeepAliveIntervalMs));
+
+    KuduScanBatch batch;
+    while (scanner.HasMoreRows()) {
+      ASSERT_OK(scanner.NextBatch(&batch));
+    }
+  }
+}
+
 // Test case 1: 3 tablets is distributed in different tablet servers.
 // When the scanner opens the next tablet, keepalive requests are sent
 // to the other tablet server automatically.
