@@ -41,6 +41,7 @@
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/rpc/rpc_controller.h"
 #include "kudu/tserver/tserver.pb.h"
+#include "kudu/util/locks.h"
 #include "kudu/util/slice.h"
 #include "kudu/util/status.h"
 
@@ -295,9 +296,6 @@ class KuduScanner::Data {
     tserver::ScannerKeepAliveResponsePB response;
     rpc::RpcController controller;
 
-   private:
-    // Prevent instances of this class from being allocated on the stack.
-    ~KeepAliveResponseCallback() = default;
   };
 
   // Analyze the response of the last Scan RPC made by this scanner.
@@ -326,6 +324,14 @@ class KuduScanner::Data {
   // When the scanner calls StartKeepAlivePeriodically(),
   // it will be initialized.
   std::shared_ptr<rpc::PeriodicTimer> keep_alive_timer_;
+
+  // Protects 'keep_alive_scanner_id_' and 'keep_alive_proxy_' below.
+  mutable simple_spinlock keep_alive_lock_;
+
+  // Mirror of next_req_.scanner_id() and proxy_ for use by the keep-alive
+  // timer callback.
+  std::string keep_alive_scanner_id_;
+  std::weak_ptr<tserver::TabletServerServiceProxy> keep_alive_proxy_;
 
   FRIEND_TEST(KeepAlivePeriodicallyTest, TestScannerKeepAlivePeriodicallyCrossServers);
 

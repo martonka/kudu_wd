@@ -3104,6 +3104,28 @@ class KeepAlivePeriodicallyTest :
 
 INSTANTIATE_TEST_SUITE_P(KeepAlivePeriodically, KeepAlivePeriodicallyTest, ::testing::Bool());
 
+// Repeated full-table scans with periodic keep-alive over a fixed duration.
+// Intended to catch deadlocks or data races during scanner teardown.
+TEST_F(KeepAlivePeriodicallyTest, TestBackgroundSessionRepeatedClientTeardown) {
+  SKIP_IF_SLOW_NOT_ALLOWED();
+
+  FLAGS_scanner_ttl_ms = 500;
+  constexpr uint64_t kKeepAliveIntervalMs = 5;
+
+  const MonoTime deadline = MonoTime::Now() + MonoDelta::FromSeconds(5);
+  while (MonoTime::Now() < deadline) {
+    KuduScanner scanner(test_table_.get());
+    ASSERT_OK(scanner.SetBatchSizeBytes(100));
+    ASSERT_OK(scanner.Open());
+    ASSERT_OK(scanner.StartKeepAlivePeriodically(kKeepAliveIntervalMs));
+
+    KuduScanBatch batch;
+    while (scanner.HasMoreRows()) {
+      ASSERT_OK(scanner.NextBatch(&batch));
+    }
+  }
+}
+
 // Test case 1: 3 tablets is distributed in different tablet servers.
 // When the scanner opens the next tablet, keepalive requests are sent
 // to the other tablet server automatically.

@@ -105,7 +105,6 @@ void KuduScanner::Data::KeepAliveResponseCallback::Run() {
     LOG(WARNING) << Substitute("Failed to send keep-alive request: $0",
                                controller.status().ToString());
   }
-  delete this;
 }
 
 Status KuduScanner::Data::StartKeepAlivePeriodically(uint64_t keep_alive_interval_ms,
@@ -114,23 +113,32 @@ Status KuduScanner::Data::StartKeepAlivePeriodically(uint64_t keep_alive_interva
   if (keep_alive_timer_ && keep_alive_timer_->started()) {
     return Status::OK();
   }
+  {
+    std::lock_guard l(keep_alive_lock_);
+    keep_alive_proxy_ = proxy_;
+    keep_alive_scanner_id_ = next_req_.has_scanner_id()
+        ? next_req_.scanner_id() : std::string();
+  }
   keep_alive_timer_ = PeriodicTimer::Create(
       std::move(messenger),
       [&]() {
-        if (!open_) return Status::IllegalState("Scanner was not open.");
-        // If there is no scanner to keep alive, we still return Status::OK().
-        if (!last_response_.IsInitialized() || !last_response_.has_more_results() ||
-            !next_req_.has_scanner_id()) {
-          return Status::OK();
+        // Snapshot the scanner ID and proxy under the lock to avoid races
+        // with the main thread updating them in OpenTablet().
+        std::string scanner_id;
+        std::shared_ptr<tserver::TabletServerServiceProxy> proxy;
+        {
+          std::lock_guard l(keep_alive_lock_);
+          scanner_id = keep_alive_scanner_id_;
+          proxy = keep_alive_proxy_.lock();
         }
-        // 'cb' deletes itself upon completion.
-        auto* cb = new KeepAliveResponseCallback();
-        cb->request.set_scanner_id(next_req_.scanner_id());
+        if (scanner_id.empty() || !proxy) return Status::OK();
+        auto cb = std::make_shared<KeepAliveResponseCallback>();
+        cb->request.set_scanner_id(scanner_id);
         cb->controller.set_timeout(configuration_.timeout());
         // PeriodicTimer does not allow waiting, so calling ScannerKeepAliveAsync()
         // instead of ScannerKeepAlive().
-        proxy_->ScannerKeepAliveAsync(cb->request, &cb->response, &cb->controller,
-                                      [cb]() { cb->Run(); });
+        proxy->ScannerKeepAliveAsync(cb->request, &cb->response, &cb->controller,
+                                     [cb = std::move(cb)]() { cb->Run(); });
         return Status::OK();
       },
       MonoDelta::FromMilliseconds(keep_alive_interval_ms));
@@ -141,6 +149,9 @@ Status KuduScanner::Data::StartKeepAlivePeriodically(uint64_t keep_alive_interva
 void KuduScanner::Data::StopKeepAlivePeriodically() {
   if (keep_alive_timer_) {
     keep_alive_timer_->Stop();
+    std::lock_guard l(keep_alive_lock_);
+    keep_alive_scanner_id_.clear();
+    keep_alive_proxy_.reset();
   }
 }
 
@@ -448,6 +459,10 @@ ScanRpcStatus KuduScanner::Data::SendScanRpc(const MonoTime& overall_deadline,
     num_rows_returned_ += last_response_.has_data() ? last_response_.data().num_rows() : 0;
     num_rows_returned_ += last_response_.has_columnar_data() ?
         last_response_.columnar_data().num_rows() : 0;
+    if (!last_response_.has_more_results()) {
+      std::lock_guard l(keep_alive_lock_);
+      keep_alive_scanner_id_.clear();
+    }
   }
   return scan_status;
 }
@@ -635,6 +650,14 @@ Status KuduScanner::Data::OpenTablet(const PartitionKey& partition_key,
             << " data_in_open=" << data_in_open_;
   } else {
     VLOG(2) << "Opened tablet " << remote_->tablet_id() << " (no rows), no scanner ID assigned";
+  }
+  // Keep the keep-alive fields in sync so the periodic timer callback
+  // (which runs on the reactor thread) can safely read them.
+  {
+    std::lock_guard l(keep_alive_lock_);
+    keep_alive_proxy_ = proxy_;
+    keep_alive_scanner_id_ = last_response_.has_more_results()
+        ? last_response_.scanner_id() : std::string();
   }
 
   // If present in the response, set the snapshot timestamp and the encoded last
