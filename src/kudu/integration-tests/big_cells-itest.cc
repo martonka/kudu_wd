@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include <gflags/gflags_declare.h>
 #include <gtest/gtest.h>
 
 #include "kudu/client/client.h"
@@ -43,6 +44,8 @@ using std::string;
 using std::unique_ptr;
 using std::vector;
 
+DECLARE_int64(rpc_max_message_size);
+
 namespace kudu {
 namespace client {
 
@@ -56,6 +59,9 @@ INSTANTIATE_TEST_SUITE_P(CellSizes, BigCellsItest,
     ::testing::Values(
         size_t{1} * 1024 * 1024,
         size_t{10} * 1024 * 1024,
+        size_t{20} * 1024 * 1024,
+        size_t{30} * 1024 * 1024,
+        size_t{50} * 1024 * 1024,
         size_t{100} * 1024 * 1024));
 
 // Writes max-sized cells (random, high-entropy) to a nullable STRING column
@@ -67,8 +73,15 @@ TEST_P(BigCellsItest, TestRoundTripMaxSizedStringCells) {
   const size_t kMaxCellBytes = GetParam();
   const char* const kTableName = "big_cells_table";
 
+  // Allow large Write and Consensus RPCs and matching client inbound/outbound limits.
+  // Serialized requests include nested protobuf overhead beyond raw cell bytes.
+  const int64_t kRpcMaxMessageBytes =
+      static_cast<int64_t>(kMaxCellBytes) * 3;
+  FLAGS_rpc_max_message_size = kRpcMaxMessageBytes;
+
   vector<string> ts_flags;
   ts_flags.emplace_back(strings::Substitute("--max_cell_size_bytes=$0", kMaxCellBytes));
+  ts_flags.emplace_back(strings::Substitute("--rpc_max_message_size=$0", kRpcMaxMessageBytes));
   NO_FATALS(StartCluster(std::move(ts_flags), {}, kNumServers));
 
   KuduSchemaBuilder builder;
